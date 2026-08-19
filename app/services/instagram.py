@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import Any
 from urllib.parse import urlencode
 
@@ -11,10 +12,6 @@ class InstagramError(RuntimeError):
     pass
 
 
-# ------------------------------------------------------------
-# Helpers
-# ------------------------------------------------------------
-
 def api_url(path: str) -> str:
     return (
         f"{settings.instagram_api_base}/"
@@ -23,12 +20,10 @@ def api_url(path: str) -> str:
     )
 
 
-# ------------------------------------------------------------
-# Ancien Instagram Login
-# ------------------------------------------------------------
-# On garde ce flow pour l'instant pour éviter de supprimer
-# des fonctionnalités de la V1.
-# ------------------------------------------------------------
+# ============================================================
+# ANCIEN INSTAGRAM LOGIN
+# Conservé pour ne rien casser dans la V1.
+# ============================================================
 
 def build_authorize_url(state: str) -> str:
     if (
@@ -36,8 +31,7 @@ def build_authorize_url(state: str) -> str:
         or not settings.instagram_redirect_uri
     ):
         raise InstagramError(
-            "INSTAGRAM_APP_ID / "
-            "INSTAGRAM_REDIRECT_URI non configurés."
+            "INSTAGRAM_APP_ID / INSTAGRAM_REDIRECT_URI non configurés."
         )
 
     params = {
@@ -60,7 +54,6 @@ def build_authorize_url(state: str) -> str:
 async def exchange_code_for_token(
     code: str,
 ) -> dict[str, Any]:
-
     if (
         not settings.instagram_app_id
         or not settings.instagram_app_secret
@@ -78,10 +71,7 @@ async def exchange_code_for_token(
         "code": code,
     }
 
-    async with httpx.AsyncClient(
-        timeout=30
-    ) as client:
-
+    async with httpx.AsyncClient(timeout=30) as client:
         response = await client.post(
             "https://api.instagram.com/oauth/access_token",
             data=data,
@@ -89,18 +79,20 @@ async def exchange_code_for_token(
 
     if response.status_code >= 400:
         raise InstagramError(
-            "Échange OAuth refusé : "
-            f"{response.text[:500]}"
+            "Échange OAuth Instagram refusé : "
+            f"{response.text[:700]}"
         )
 
     return response.json()
 
 
-# ------------------------------------------------------------
-# Facebook Login for Business
-# ------------------------------------------------------------
+# ============================================================
+# FACEBOOK LOGIN FOR BUSINESS
+# ============================================================
 
-def build_facebook_business_login_url() -> str:
+def build_facebook_business_login_url(
+    state: str,
+) -> str:
     if not settings.meta_app_id:
         raise InstagramError(
             "META_APP_ID non configuré."
@@ -119,8 +111,19 @@ def build_facebook_business_login_url() -> str:
     params = {
         "client_id": settings.meta_app_id,
         "redirect_uri": settings.facebook_redirect_uri,
-        "response_type": "token",
+
+        # Configuration Facebook Login for Business créée
+        # dans Meta Developers.
         "config_id": settings.facebook_config_id,
+
+        # On récupère maintenant un code côté serveur.
+        "response_type": "code",
+
+        # Important avec Facebook Login for Business.
+        "override_default_response_type": "true",
+
+        # Protection CSRF.
+        "state": state,
     }
 
     return (
@@ -131,13 +134,80 @@ def build_facebook_business_login_url() -> str:
     )
 
 
-# ------------------------------------------------------------
-# Résolution compte Instagram depuis le token Meta
-# ------------------------------------------------------------
+async def exchange_facebook_code_for_token(
+    code: str,
+) -> dict[str, Any]:
+    """
+    Échange le code renvoyé par Facebook Login for Business
+    contre un access token Meta.
+    """
+
+    meta_app_secret = os.getenv(
+        "META_APP_SECRET",
+        "",
+    ).strip()
+
+    if not settings.meta_app_id:
+        raise InstagramError(
+            "META_APP_ID non configuré."
+        )
+
+    if not meta_app_secret:
+        raise InstagramError(
+            "META_APP_SECRET non configuré dans Render."
+        )
+
+    if not settings.facebook_redirect_uri:
+        raise InstagramError(
+            "FACEBOOK_REDIRECT_URI non configuré."
+        )
+
+    params = {
+        "client_id": settings.meta_app_id,
+        "client_secret": meta_app_secret,
+        "redirect_uri": settings.facebook_redirect_uri,
+        "code": code,
+    }
+
+    async with httpx.AsyncClient(
+        timeout=30
+    ) as client:
+        response = await client.get(
+            api_url("oauth/access_token"),
+            params=params,
+        )
+
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Impossible d'échanger le code Meta contre un token : "
+            f"{response.text[:900]}"
+        )
+
+    data = response.json()
+
+    access_token = data.get(
+        "access_token"
+    )
+
+    if not access_token:
+        raise InstagramError(
+            "Meta n'a pas renvoyé d'access_token."
+        )
+
+    return data
+
+
+# ============================================================
+# RÉCUPÉRATION PAGE + COMPTE INSTAGRAM
+# ============================================================
 
 async def get_instagram_business_account(
     access_token: str,
 ) -> dict[str, str]:
+    """
+    Récupère les Pages accessibles et cherche
+    le compte Instagram Business associé.
+    """
 
     params = {
         "fields": (
@@ -152,7 +222,6 @@ async def get_instagram_business_account(
     async with httpx.AsyncClient(
         timeout=30
     ) as client:
-
         response = await client.get(
             api_url("me/accounts"),
             params=params,
@@ -161,12 +230,12 @@ async def get_instagram_business_account(
     if response.status_code >= 400:
         raise InstagramError(
             "Impossible de récupérer les Pages Facebook : "
-            f"{response.text[:700]}"
+            f"{response.text[:900]}"
         )
 
-    response_data = response.json()
+    payload = response.json()
 
-    pages = response_data.get(
+    pages = payload.get(
         "data",
         [],
     )
@@ -204,9 +273,9 @@ async def get_instagram_business_account(
     )
 
 
-# ------------------------------------------------------------
-# Création conteneur Reel
-# ------------------------------------------------------------
+# ============================================================
+# PUBLICATION INSTAGRAM
+# ============================================================
 
 async def create_reel_container(
     *,
@@ -215,7 +284,6 @@ async def create_reel_container(
     video_url: str,
     caption: str,
 ) -> str:
-
     payload = {
         "media_type": "REELS",
         "video_url": video_url,
@@ -227,7 +295,6 @@ async def create_reel_container(
     async with httpx.AsyncClient(
         timeout=45
     ) as client:
-
         response = await client.post(
             api_url(
                 f"{user_id}/media"
@@ -238,7 +305,7 @@ async def create_reel_container(
     if response.status_code >= 400:
         raise InstagramError(
             "Création du Reel refusée : "
-            f"{response.text[:700]}"
+            f"{response.text[:900]}"
         )
 
     creation_id = response.json().get(
@@ -247,23 +314,17 @@ async def create_reel_container(
 
     if not creation_id:
         raise InstagramError(
-            "Instagram n'a pas renvoyé "
-            "de creation_id."
+            "Instagram n'a pas renvoyé de creation_id."
         )
 
     return creation_id
 
-
-# ------------------------------------------------------------
-# État traitement média
-# ------------------------------------------------------------
 
 async def get_container_status(
     *,
     creation_id: str,
     access_token: str,
 ) -> str:
-
     params = {
         "fields": "status_code,status",
         "access_token": access_token,
@@ -272,7 +333,6 @@ async def get_container_status(
     async with httpx.AsyncClient(
         timeout=30
     ) as client:
-
         response = await client.get(
             api_url(
                 creation_id
@@ -283,7 +343,7 @@ async def get_container_status(
     if response.status_code >= 400:
         raise InstagramError(
             "Statut du média indisponible : "
-            f"{response.text[:500]}"
+            f"{response.text[:700]}"
         )
 
     data = response.json()
@@ -301,11 +361,9 @@ async def wait_until_ready(
     access_token: str,
     timeout_seconds: int = 180,
 ) -> None:
-
     elapsed = 0
 
     while elapsed < timeout_seconds:
-
         status = await get_container_status(
             creation_id=creation_id,
             access_token=access_token,
@@ -322,13 +380,10 @@ async def wait_until_ready(
             "EXPIRED",
         }:
             raise InstagramError(
-                "Traitement Instagram échoué "
-                f"({status})."
+                f"Traitement Instagram échoué ({status})."
             )
 
-        await asyncio.sleep(
-            5
-        )
+        await asyncio.sleep(5)
 
         elapsed += 5
 
@@ -338,17 +393,12 @@ async def wait_until_ready(
     )
 
 
-# ------------------------------------------------------------
-# Publication conteneur
-# ------------------------------------------------------------
-
 async def publish_container(
     *,
     user_id: str,
     access_token: str,
     creation_id: str,
 ) -> str:
-
     payload = {
         "creation_id": creation_id,
         "access_token": access_token,
@@ -357,7 +407,6 @@ async def publish_container(
     async with httpx.AsyncClient(
         timeout=45
     ) as client:
-
         response = await client.post(
             api_url(
                 f"{user_id}/media_publish"
@@ -368,7 +417,7 @@ async def publish_container(
     if response.status_code >= 400:
         raise InstagramError(
             "Publication refusée : "
-            f"{response.text[:700]}"
+            f"{response.text[:900]}"
         )
 
     media_id = response.json().get(
@@ -384,10 +433,6 @@ async def publish_container(
     return media_id
 
 
-# ------------------------------------------------------------
-# Publication complète Reel
-# ------------------------------------------------------------
-
 async def publish_reel(
     *,
     user_id: str,
@@ -395,7 +440,6 @@ async def publish_reel(
     video_url: str,
     caption: str,
 ) -> dict[str, str]:
-
     creation_id = await create_reel_container(
         user_id=user_id,
         access_token=access_token,
