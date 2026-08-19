@@ -3,51 +3,91 @@ import secrets
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import (
+    FastAPI,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
 )
+
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from itsdangerous import BadSignature, URLSafeSerializer
+
+from itsdangerous import (
+    BadSignature,
+    URLSafeSerializer,
+)
 
 from app.config import settings
-from app.services.cerebras import CerebrasError, generate_caption
+
+from app.services.cerebras import (
+    CerebrasError,
+    generate_caption,
+)
+
 from app.services.instagram import (
     InstagramError,
     build_authorize_url,
     build_facebook_business_login_url,
     exchange_code_for_token,
+    exchange_facebook_code_for_token,
     get_instagram_business_account,
     publish_reel,
 )
 
 
-BASE_DIR = Path(__file__).resolve().parent
-UPLOAD_DIR = BASE_DIR / "uploads"
-UPLOAD_DIR.mkdir(exist_ok=True)
+BASE_DIR = Path(
+    __file__
+).resolve().parent
+
+UPLOAD_DIR = (
+    BASE_DIR
+    / "uploads"
+)
+
+UPLOAD_DIR.mkdir(
+    exist_ok=True
+)
+
 
 app = FastAPI(
     title="Instagram Studio V1",
-    version="1.1.0",
+    version="1.2.0",
 )
+
 
 app.mount(
     "/static",
-    StaticFiles(directory=BASE_DIR / "static"),
+    StaticFiles(
+        directory=BASE_DIR / "static"
+    ),
     name="static",
 )
 
+
 templates = Jinja2Templates(
-    directory=BASE_DIR / "templates"
+    directory=BASE_DIR
+    / "templates"
 )
+
 
 serializer = URLSafeSerializer(
     settings.app_secret_key,
     salt="instagram-oauth",
+)
+
+
+facebook_serializer = URLSafeSerializer(
+    settings.app_secret_key,
+    salt="facebook-business-oauth",
 )
 
 
@@ -64,8 +104,17 @@ def json_error(
     )
 
 
-@app.get("/", response_class=HTMLResponse)
-async def home(request: Request):
+# ============================================================
+# HOME
+# ============================================================
+
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+)
+async def home(
+    request: Request
+):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -73,52 +122,77 @@ async def home(request: Request):
             "cerebras_ready": bool(
                 settings.cerebras_api_key
             ),
+
             "instagram_ready": bool(
                 settings.instagram_access_token
                 and settings.instagram_user_id
             ),
+
             "oauth_ready": bool(
-                settings.instagram_app_id
-                and settings.instagram_app_secret
-                and settings.instagram_redirect_uri
+                settings.meta_app_id
+                and settings.facebook_config_id
+                and settings.facebook_redirect_uri
             ),
-            "model": settings.cerebras_model,
-            "max_upload_mb": settings.max_upload_mb,
+
+            "model": (
+                settings.cerebras_model
+            ),
+
+            "max_upload_mb": (
+                settings.max_upload_mb
+            ),
         },
     )
 
+
+# ============================================================
+# HEALTH
+# ============================================================
 
 @app.get("/health")
 async def health():
     return {
         "ok": True,
+
         "cerebras_configured": bool(
             settings.cerebras_api_key
         ),
+
         "instagram_direct_configured": bool(
             settings.instagram_access_token
             and settings.instagram_user_id
         ),
-        "instagram_oauth_configured": bool(
-            settings.instagram_app_id
-            and settings.instagram_app_secret
-            and settings.instagram_redirect_uri
-        ),
+
         "facebook_business_login_configured": bool(
             settings.meta_app_id
+            and settings.facebook_config_id
             and settings.facebook_redirect_uri
+        ),
+
+        "meta_app_secret_configured": bool(
+            os.getenv(
+                "META_APP_SECRET",
+                "",
+            )
         ),
     }
 
 
-# ------------------------------------------------------------
+# ============================================================
 # IA
-# ------------------------------------------------------------
+# ============================================================
 
-@app.post("/api/ai/caption")
-async def ai_caption(payload: dict):
+@app.post(
+    "/api/ai/caption"
+)
+async def ai_caption(
+    payload: dict
+):
     description = str(
-        payload.get("description", "")
+        payload.get(
+            "description",
+            "",
+        )
     ).strip()
 
     if not description:
@@ -130,20 +204,40 @@ async def ai_caption(payload: dict):
     try:
         result = await generate_caption(
             description=description,
+
             location=str(
-                payload.get("location", "")
+                payload.get(
+                    "location",
+                    "",
+                )
             ).strip(),
+
             drone=str(
-                payload.get("drone", "")
+                payload.get(
+                    "drone",
+                    "",
+                )
             ).strip(),
+
             language=str(
-                payload.get("language", "fr")
+                payload.get(
+                    "language",
+                    "fr",
+                )
             ).strip(),
+
             tone=str(
-                payload.get("tone", "cinematic")
+                payload.get(
+                    "tone",
+                    "cinematic",
+                )
             ).strip(),
+
             extra=str(
-                payload.get("extra", "")
+                payload.get(
+                    "extra",
+                    "",
+                )
             ).strip(),
         )
 
@@ -160,11 +254,13 @@ async def ai_caption(payload: dict):
         )
 
 
-# ------------------------------------------------------------
-# Upload média
-# ------------------------------------------------------------
+# ============================================================
+# UPLOAD
+# ============================================================
 
-@app.post("/api/upload")
+@app.post(
+    "/api/upload"
+)
 async def upload_media(
     file: UploadFile = File(...)
 ):
@@ -190,11 +286,13 @@ async def upload_media(
         )
 
     target_name = (
-        f"{uuid.uuid4().hex}{suffix}"
+        f"{uuid.uuid4().hex}"
+        f"{suffix}"
     )
 
     target = (
-        UPLOAD_DIR / target_name
+        UPLOAD_DIR
+        / target_name
     )
 
     limit = (
@@ -206,26 +304,34 @@ async def upload_media(
     total = 0
 
     try:
-        with target.open("wb") as out:
+        with target.open(
+            "wb"
+        ) as out:
+
             while chunk := await file.read(
                 1024 * 1024
             ):
-                total += len(chunk)
+                total += len(
+                    chunk
+                )
 
                 if total > limit:
                     out.close()
+
                     target.unlink(
                         missing_ok=True
                     )
 
                     return json_error(
-                        f"Fichier trop gros. "
-                        f"Limite: "
+                        "Fichier trop gros. "
+                        f"Limite : "
                         f"{settings.max_upload_mb} Mo.",
                         413,
                     )
 
-                out.write(chunk)
+                out.write(
+                    chunk
+                )
 
     finally:
         await file.close()
@@ -243,7 +349,9 @@ async def upload_media(
     }
 
 
-@app.get("/media/{filename}")
+@app.get(
+    "/media/{filename}"
+)
 async def serve_media(
     filename: str
 ):
@@ -257,7 +365,8 @@ async def serve_media(
         )
 
     path = (
-        UPLOAD_DIR / safe_name
+        UPLOAD_DIR
+        / safe_name
     )
 
     if (
@@ -273,11 +382,13 @@ async def serve_media(
     )
 
 
-# ------------------------------------------------------------
-# Publication Instagram
-# ------------------------------------------------------------
+# ============================================================
+# PUBLICATION INSTAGRAM
+# ============================================================
 
-@app.post("/api/instagram/publish")
+@app.post(
+    "/api/instagram/publish"
+)
 async def instagram_publish(
     payload: dict
 ):
@@ -302,19 +413,20 @@ async def instagram_publish(
         )
     ):
         return json_error(
-            "Une URL vidéo publique est nécessaire."
+            "Une URL vidéo publique "
+            "est nécessaire."
         )
 
     access_token = str(
         payload.get(
-            "access_token",
+            "access_token"
         )
         or settings.instagram_access_token
     ).strip()
 
     user_id = str(
         payload.get(
-            "user_id",
+            "user_id"
         )
         or settings.instagram_user_id
     ).strip()
@@ -325,8 +437,8 @@ async def instagram_publish(
     ):
         return json_error(
             "Instagram n'est pas encore configuré. "
-            "Ajoute INSTAGRAM_ACCESS_TOKEN "
-            "et INSTAGRAM_USER_ID dans Render."
+            "Ajoute INSTAGRAM_ACCESS_TOKEN et "
+            "INSTAGRAM_USER_ID dans Render."
         )
 
     try:
@@ -349,11 +461,13 @@ async def instagram_publish(
         )
 
 
-# ------------------------------------------------------------
-# Ancien Instagram OAuth
-# ------------------------------------------------------------
+# ============================================================
+# ANCIEN INSTAGRAM OAUTH
+# ============================================================
 
-@app.get("/auth/instagram")
+@app.get(
+    "/auth/instagram"
+)
 async def instagram_auth():
     state_payload = {
         "nonce": secrets.token_urlsafe(
@@ -361,8 +475,10 @@ async def instagram_auth():
         )
     }
 
-    signed_state = serializer.dumps(
-        state_payload
+    signed_state = (
+        serializer.dumps(
+            state_payload
+        )
     )
 
     try:
@@ -395,7 +511,7 @@ async def instagram_callback(
     if error:
         return HTMLResponse(
             "Connexion Instagram "
-            f"annulée/refusée: {error}",
+            f"annulée/refusée : {error}",
             status_code=400,
         )
 
@@ -406,13 +522,13 @@ async def instagram_callback(
 
     except BadSignature:
         return HTMLResponse(
-            "État OAuth invalide.",
+            "État OAuth Instagram invalide.",
             status_code=400,
         )
 
     if not code:
         return HTMLResponse(
-            "Code OAuth manquant.",
+            "Code OAuth Instagram manquant.",
             status_code=400,
         )
 
@@ -457,15 +573,35 @@ async def instagram_callback(
     )
 
 
-# ------------------------------------------------------------
-# Facebook Login for Business
-# ------------------------------------------------------------
+# ============================================================
+# FACEBOOK LOGIN FOR BUSINESS
+# ============================================================
 
-@app.get("/auth/facebook")
+@app.get(
+    "/auth/facebook"
+)
 async def facebook_business_auth():
+    """
+    Début du flow Facebook Login for Business.
+    """
+
+    state_payload = {
+        "nonce": secrets.token_urlsafe(
+            24
+        )
+    }
+
+    state = (
+        facebook_serializer.dumps(
+            state_payload
+        )
+    )
+
     try:
         url = (
-            build_facebook_business_login_url()
+            build_facebook_business_login_url(
+                state
+            )
         )
 
         return RedirectResponse(
@@ -486,194 +622,339 @@ async def facebook_business_auth():
     "/auth/facebook/callback",
     response_class=HTMLResponse,
 )
-async def facebook_business_callback():
-    """
-    Meta renvoie access_token et long_lived_token
-    dans le fragment # de l'URL.
-
-    Le serveur ne peut pas lire directement le fragment,
-    donc cette page utilise JavaScript pour le récupérer
-    puis l'envoyer au backend.
-    """
-
-    return HTMLResponse(
-        """
-<!doctype html>
-<html lang="fr">
-<head>
-    <meta charset="utf-8">
-    <meta
-        name="viewport"
-        content="width=device-width,initial-scale=1"
-    >
-    <title>Connexion Meta</title>
-
-    <style>
-        body {
-            font-family: system-ui, -apple-system, sans-serif;
-            background: #090b10;
-            color: white;
-            padding: 24px;
-        }
-
-        .card {
-            max-width: 650px;
-            margin: 40px auto;
-            background: #141821;
-            border: 1px solid #2b3240;
-            border-radius: 20px;
-            padding: 24px;
-        }
-
-        code {
-            word-break: break-all;
-        }
-
-        .ok {
-            color: #66e3b4;
-        }
-
-        .error {
-            color: #ff7c91;
-        }
-    </style>
-</head>
-
-<body>
-    <div class="card">
-        <h1>Connexion Meta</h1>
-
-        <p id="status">
-            Récupération du compte Instagram…
-        </p>
-
-        <div id="result"></div>
-    </div>
-
-<script>
-(async () => {
-    const status = document.getElementById("status");
-    const result = document.getElementById("result");
-
-    const params = new URLSearchParams(
-        window.location.hash.substring(1)
-    );
-
-    const token =
-        params.get("long_lived_token")
-        || params.get("access_token");
-
-    if (!token) {
-        status.className = "error";
-        status.textContent =
-            "Aucun token reçu depuis Meta.";
-
-        return;
-    }
-
-    try {
-        const response = await fetch(
-            "/api/facebook/resolve-instagram",
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type":
-                        "application/json"
-                },
-                body: JSON.stringify({
-                    access_token: token
-                })
-            }
-        );
-
-        const data = await response.json();
-
-        if (!data.ok) {
-            throw new Error(
-                data.error
-                || "Erreur inconnue"
-            );
-        }
-
-        status.className = "ok";
-        status.textContent =
-            "Compte Instagram trouvé ✅";
-
-        result.innerHTML = `
-            <p>
-                Page Facebook :
-                <strong>
-                    ${data.page_name}
-                </strong>
-            </p>
-
-            <p>
-                INSTAGRAM_USER_ID
-            </p>
-
-            <code>
-                ${data.instagram_user_id}
-            </code>
-
-            <p>
-                INSTAGRAM_ACCESS_TOKEN
-            </p>
-
-            <code>
-                ${token}
-            </code>
-
-            <p>
-                Copie maintenant ces deux valeurs
-                dans Render → Environment.
-            </p>
-        `;
-
-    } catch (error) {
-        status.className = "error";
-        status.textContent =
-            "Erreur : " + error.message;
-    }
-})();
-</script>
-</body>
-</html>
-        """
-    )
-
-
-@app.post(
-    "/api/facebook/resolve-instagram"
-)
-async def resolve_instagram_account(
-    payload: dict
+async def facebook_business_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+    error_reason: str = "",
+    error_description: str = "",
 ):
-    access_token = str(
-        payload.get(
-            "access_token",
-            "",
-        )
-    ).strip()
+    """
+    Facebook renvoie maintenant :
 
-    if not access_token:
-        return json_error(
-            "Token Meta manquant."
+    /auth/facebook/callback?code=...
+
+    Le serveur échange ensuite ce code
+    contre un access token Meta.
+    """
+
+    if error:
+        message = (
+            error_description
+            or error_reason
+            or error
+        )
+
+        return HTMLResponse(
+            "Connexion Facebook/Meta "
+            f"annulée ou refusée : {message}",
+            status_code=400,
+        )
+
+    if not state:
+        return HTMLResponse(
+            "Paramètre state Meta manquant.",
+            status_code=400,
         )
 
     try:
+        facebook_serializer.loads(
+            state
+        )
+
+    except BadSignature:
+        return HTMLResponse(
+            "État OAuth Meta invalide.",
+            status_code=400,
+        )
+
+    if not code:
+        return HTMLResponse(
+            "Meta n'a pas renvoyé de code OAuth.",
+            status_code=400,
+        )
+
+    try:
+        # 1. Code → access token
+        token_data = (
+            await exchange_facebook_code_for_token(
+                code
+            )
+        )
+
+        access_token = str(
+            token_data.get(
+                "access_token",
+                "",
+            )
+        ).strip()
+
+        if not access_token:
+            raise InstagramError(
+                "Token Meta vide après échange OAuth."
+            )
+
+        # 2. Token → Page Facebook
+        #             + Instagram Business ID
         account = (
             await get_instagram_business_account(
                 access_token
             )
         )
 
-        return {
-            "ok": True,
-            **account,
-        }
-
     except InstagramError as exc:
-        return json_error(
-            str(exc),
-            502,
+        return HTMLResponse(
+            f"""
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport"
+      content="width=device-width,initial-scale=1">
+<title>Erreur Meta</title>
+
+<style>
+body {{
+    font-family: system-ui, -apple-system, sans-serif;
+    background: #090b10;
+    color: white;
+    padding: 20px;
+}}
+
+.card {{
+    max-width: 700px;
+    margin: 40px auto;
+    background: #141821;
+    border: 1px solid #303746;
+    border-radius: 20px;
+    padding: 24px;
+}}
+
+.error {{
+    color: #ff7c91;
+    word-break: break-word;
+}}
+</style>
+</head>
+
+<body>
+<div class="card">
+
+<h1>Connexion Meta ❌</h1>
+
+<p class="error">
+{str(exc)}
+</p>
+
+<p>
+Tu peux revenir sur Instagram Studio
+et réessayer après correction.
+</p>
+
+<a href="/"
+   style="color:#9b8cff;">
+Retour au Studio
+</a>
+
+</div>
+</body>
+</html>
+            """,
+            status_code=502,
         )
+
+    instagram_user_id = (
+        account[
+            "instagram_user_id"
+        ]
+    )
+
+    page_name = (
+        account.get(
+            "page_name",
+            "",
+        )
+    )
+
+    page_id = (
+        account.get(
+            "page_id",
+            "",
+        )
+    )
+
+    # On n'enregistre volontairement PAS
+    # le token sur le filesystem Render.
+    #
+    # Le token doit être copié
+    # manuellement dans Environment.
+    return HTMLResponse(
+        f"""
+<!doctype html>
+<html lang="fr">
+
+<head>
+<meta charset="utf-8">
+
+<meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+>
+
+<title>Instagram connecté</title>
+
+<style>
+
+body {{
+    font-family:
+        system-ui,
+        -apple-system,
+        sans-serif;
+
+    background: #090b10;
+    color: white;
+    padding: 20px;
+}}
+
+.card {{
+    max-width: 700px;
+    margin: 30px auto;
+
+    background: #141821;
+
+    border:
+        1px solid
+        #303746;
+
+    border-radius: 20px;
+
+    padding: 24px;
+}}
+
+.ok {{
+    color: #66e3b4;
+}}
+
+.value {{
+    background: #090b10;
+
+    border:
+        1px solid
+        #303746;
+
+    border-radius: 12px;
+
+    padding: 14px;
+
+    margin-bottom: 20px;
+
+    word-break: break-all;
+
+    user-select: all;
+}}
+
+.warning {{
+    color: #ffce73;
+}}
+
+a {{
+    color: #9b8cff;
+}}
+
+</style>
+
+</head>
+
+
+<body>
+
+<div class="card">
+
+<h1 class="ok">
+Instagram connecté ✅
+</h1>
+
+
+<p>
+<strong>Page Facebook :</strong><br>
+{page_name}
+</p>
+
+
+<p>
+<strong>Page ID :</strong>
+</p>
+
+<div class="value">
+{page_id}
+</div>
+
+
+<p>
+<strong>
+INSTAGRAM_USER_ID
+</strong>
+</p>
+
+<div class="value">
+{instagram_user_id}
+</div>
+
+
+<p>
+<strong>
+INSTAGRAM_ACCESS_TOKEN
+</strong>
+</p>
+
+<div class="value">
+{access_token}
+</div>
+
+
+<p class="warning">
+⚠️ Ce token est secret.
+Ne le partage pas et ne le mets pas sur GitHub.
+</p>
+
+
+<p>
+Dans Render → Environment,
+ajoute maintenant :
+</p>
+
+<div class="value">
+INSTAGRAM_USER_ID
+</div>
+
+<p>
+avec la valeur affichée plus haut.
+</p>
+
+
+<div class="value">
+INSTAGRAM_ACCESS_TOKEN
+</div>
+
+<p>
+avec le token affiché plus haut.
+</p>
+
+
+<p>
+Ensuite fais Save Changes
+et attends le redéploiement.
+</p>
+
+
+<a href="/">
+Retour à Instagram Studio
+</a>
+
+</div>
+
+</body>
+</html>
+        """
+    )
