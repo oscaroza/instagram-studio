@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: instagram-studio-v1
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.5
+      - key: APP_SECRET_KEY
+        generateValue: true
+      - key: CEREBRAS_MODEL
+        value: gpt-oss-120b
+      - key: CEREBRAS_BASE_URL
+        value: https://api.cerebras.ai/v1
+      - key: INSTAGRAM_API_BASE
+        value: https://graph.instagram.com
+      - key: INSTAGRAM_API_VERSION
+        value: v23.0
+      - key: MAX_UPLOAD_MB
+        value: 250
