@@ -3,8 +3,13 @@ import secrets
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeSerializer
@@ -14,22 +19,49 @@ from app.services.cerebras import CerebrasError, generate_caption
 from app.services.instagram import (
     InstagramError,
     build_authorize_url,
+    build_facebook_business_login_url,
     exchange_code_for_token,
+    get_instagram_business_account,
     publish_reel,
 )
+
 
 BASE_DIR = Path(__file__).resolve().parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-app = FastAPI(title="Instagram Studio V1", version="1.0.0")
-app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=BASE_DIR / "templates")
-serializer = URLSafeSerializer(settings.app_secret_key, salt="instagram-oauth")
+app = FastAPI(
+    title="Instagram Studio V1",
+    version="1.1.0",
+)
+
+app.mount(
+    "/static",
+    StaticFiles(directory=BASE_DIR / "static"),
+    name="static",
+)
+
+templates = Jinja2Templates(
+    directory=BASE_DIR / "templates"
+)
+
+serializer = URLSafeSerializer(
+    settings.app_secret_key,
+    salt="instagram-oauth",
+)
 
 
-def json_error(message: str, status_code: int = 400) -> JSONResponse:
-    return JSONResponse({"ok": False, "error": message}, status_code=status_code)
+def json_error(
+    message: str,
+    status_code: int = 400,
+) -> JSONResponse:
+    return JSONResponse(
+        {
+            "ok": False,
+            "error": message,
+        },
+        status_code=status_code,
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -38,9 +70,18 @@ async def home(request: Request):
         request=request,
         name="index.html",
         context={
-            "cerebras_ready": bool(settings.cerebras_api_key),
-            "instagram_ready": bool(settings.instagram_access_token and settings.instagram_user_id),
-            "oauth_ready": bool(settings.instagram_app_id and settings.instagram_app_secret and settings.instagram_redirect_uri),
+            "cerebras_ready": bool(
+                settings.cerebras_api_key
+            ),
+            "instagram_ready": bool(
+                settings.instagram_access_token
+                and settings.instagram_user_id
+            ),
+            "oauth_ready": bool(
+                settings.instagram_app_id
+                and settings.instagram_app_secret
+                and settings.instagram_redirect_uri
+            ),
             "model": settings.cerebras_model,
             "max_upload_mb": settings.max_upload_mb,
         },
@@ -51,82 +92,242 @@ async def home(request: Request):
 async def health():
     return {
         "ok": True,
-        "cerebras_configured": bool(settings.cerebras_api_key),
-        "instagram_direct_configured": bool(settings.instagram_access_token and settings.instagram_user_id),
-        "instagram_oauth_configured": bool(settings.instagram_app_id and settings.instagram_app_secret and settings.instagram_redirect_uri),
+        "cerebras_configured": bool(
+            settings.cerebras_api_key
+        ),
+        "instagram_direct_configured": bool(
+            settings.instagram_access_token
+            and settings.instagram_user_id
+        ),
+        "instagram_oauth_configured": bool(
+            settings.instagram_app_id
+            and settings.instagram_app_secret
+            and settings.instagram_redirect_uri
+        ),
+        "facebook_business_login_configured": bool(
+            settings.meta_app_id
+            and settings.facebook_redirect_uri
+        ),
     }
 
 
+# ------------------------------------------------------------
+# IA
+# ------------------------------------------------------------
+
 @app.post("/api/ai/caption")
 async def ai_caption(payload: dict):
-    description = str(payload.get("description", "")).strip()
+    description = str(
+        payload.get("description", "")
+    ).strip()
+
     if not description:
-        return json_error("Décris rapidement la vidéo avant de générer une caption.")
+        return json_error(
+            "Décris rapidement la vidéo "
+            "avant de générer une caption."
+        )
+
     try:
         result = await generate_caption(
             description=description,
-            location=str(payload.get("location", "")).strip(),
-            drone=str(payload.get("drone", "")).strip(),
-            language=str(payload.get("language", "fr")).strip(),
-            tone=str(payload.get("tone", "cinematic")).strip(),
-            extra=str(payload.get("extra", "")).strip(),
+            location=str(
+                payload.get("location", "")
+            ).strip(),
+            drone=str(
+                payload.get("drone", "")
+            ).strip(),
+            language=str(
+                payload.get("language", "fr")
+            ).strip(),
+            tone=str(
+                payload.get("tone", "cinematic")
+            ).strip(),
+            extra=str(
+                payload.get("extra", "")
+            ).strip(),
         )
-        return {"ok": True, "result": result, "model": settings.cerebras_model}
-    except CerebrasError as exc:
-        return json_error(str(exc), 502)
 
+        return {
+            "ok": True,
+            "result": result,
+            "model": settings.cerebras_model,
+        }
+
+    except CerebrasError as exc:
+        return json_error(
+            str(exc),
+            502,
+        )
+
+
+# ------------------------------------------------------------
+# Upload média
+# ------------------------------------------------------------
 
 @app.post("/api/upload")
-async def upload_media(file: UploadFile = File(...)):
+async def upload_media(
+    file: UploadFile = File(...)
+):
     if not file.filename:
-        return json_error("Fichier invalide.")
-    allowed = {".mp4", ".mov", ".m4v"}
-    suffix = Path(file.filename).suffix.lower()
-    if suffix not in allowed:
-        return json_error("Format non pris en charge. Utilise MP4, MOV ou M4V.")
+        return json_error(
+            "Fichier invalide."
+        )
 
-    target_name = f"{uuid.uuid4().hex}{suffix}"
-    target = UPLOAD_DIR / target_name
-    limit = settings.max_upload_mb * 1024 * 1024
+    allowed = {
+        ".mp4",
+        ".mov",
+        ".m4v",
+    }
+
+    suffix = Path(
+        file.filename
+    ).suffix.lower()
+
+    if suffix not in allowed:
+        return json_error(
+            "Format non pris en charge. "
+            "Utilise MP4, MOV ou M4V."
+        )
+
+    target_name = (
+        f"{uuid.uuid4().hex}{suffix}"
+    )
+
+    target = (
+        UPLOAD_DIR / target_name
+    )
+
+    limit = (
+        settings.max_upload_mb
+        * 1024
+        * 1024
+    )
+
     total = 0
+
     try:
         with target.open("wb") as out:
-            while chunk := await file.read(1024 * 1024):
+            while chunk := await file.read(
+                1024 * 1024
+            ):
                 total += len(chunk)
+
                 if total > limit:
                     out.close()
-                    target.unlink(missing_ok=True)
-                    return json_error(f"Fichier trop gros. Limite: {settings.max_upload_mb} Mo.", 413)
+                    target.unlink(
+                        missing_ok=True
+                    )
+
+                    return json_error(
+                        f"Fichier trop gros. "
+                        f"Limite: "
+                        f"{settings.max_upload_mb} Mo.",
+                        413,
+                    )
+
                 out.write(chunk)
+
     finally:
         await file.close()
 
-    public_url = f"{settings.app_base_url}/media/{target_name}"
-    return {"ok": True, "url": public_url, "filename": target_name, "size": total}
+    public_url = (
+        f"{settings.app_base_url}"
+        f"/media/{target_name}"
+    )
+
+    return {
+        "ok": True,
+        "url": public_url,
+        "filename": target_name,
+        "size": total,
+    }
 
 
 @app.get("/media/{filename}")
-async def serve_media(filename: str):
-    safe_name = os.path.basename(filename)
-    if safe_name != filename:
-        raise HTTPException(status_code=404)
-    path = UPLOAD_DIR / safe_name
-    if not path.exists() or not path.is_file():
-        raise HTTPException(status_code=404)
-    return FileResponse(path)
+async def serve_media(
+    filename: str
+):
+    safe_name = os.path.basename(
+        filename
+    )
 
+    if safe_name != filename:
+        raise HTTPException(
+            status_code=404
+        )
+
+    path = (
+        UPLOAD_DIR / safe_name
+    )
+
+    if (
+        not path.exists()
+        or not path.is_file()
+    ):
+        raise HTTPException(
+            status_code=404
+        )
+
+    return FileResponse(
+        path
+    )
+
+
+# ------------------------------------------------------------
+# Publication Instagram
+# ------------------------------------------------------------
 
 @app.post("/api/instagram/publish")
-async def instagram_publish(payload: dict):
-    video_url = str(payload.get("video_url", "")).strip()
-    caption = str(payload.get("caption", "")).strip()
-    if not video_url.startswith(("https://", "http://")):
-        return json_error("Une URL vidéo publique est nécessaire.")
+async def instagram_publish(
+    payload: dict
+):
+    video_url = str(
+        payload.get(
+            "video_url",
+            "",
+        )
+    ).strip()
 
-    access_token = str(payload.get("access_token") or settings.instagram_access_token).strip()
-    user_id = str(payload.get("user_id") or settings.instagram_user_id).strip()
-    if not access_token or not user_id:
-        return json_error("Instagram n'est pas encore configuré. Ajoute INSTAGRAM_ACCESS_TOKEN et INSTAGRAM_USER_ID dans Render.")
+    caption = str(
+        payload.get(
+            "caption",
+            "",
+        )
+    ).strip()
+
+    if not video_url.startswith(
+        (
+            "https://",
+            "http://",
+        )
+    ):
+        return json_error(
+            "Une URL vidéo publique est nécessaire."
+        )
+
+    access_token = str(
+        payload.get(
+            "access_token",
+        )
+        or settings.instagram_access_token
+    ).strip()
+
+    user_id = str(
+        payload.get(
+            "user_id",
+        )
+        or settings.instagram_user_id
+    ).strip()
+
+    if (
+        not access_token
+        or not user_id
+    ):
+        return json_error(
+            "Instagram n'est pas encore configuré. "
+            "Ajoute INSTAGRAM_ACCESS_TOKEN "
+            "et INSTAGRAM_USER_ID dans Render."
+        )
 
     try:
         result = await publish_reel(
@@ -135,43 +336,344 @@ async def instagram_publish(payload: dict):
             video_url=video_url,
             caption=caption,
         )
-        return {"ok": True, **result}
-    except InstagramError as exc:
-        return json_error(str(exc), 502)
 
+        return {
+            "ok": True,
+            **result,
+        }
+
+    except InstagramError as exc:
+        return json_error(
+            str(exc),
+            502,
+        )
+
+
+# ------------------------------------------------------------
+# Ancien Instagram OAuth
+# ------------------------------------------------------------
 
 @app.get("/auth/instagram")
 async def instagram_auth():
-    state_payload = {"nonce": secrets.token_urlsafe(16)}
-    signed_state = serializer.dumps(state_payload)
+    state_payload = {
+        "nonce": secrets.token_urlsafe(
+            16
+        )
+    }
+
+    signed_state = serializer.dumps(
+        state_payload
+    )
+
     try:
-        return RedirectResponse(build_authorize_url(signed_state))
+        return RedirectResponse(
+            build_authorize_url(
+                signed_state
+            )
+        )
+
     except InstagramError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": str(exc),
+            },
+            status_code=400,
+        )
 
 
-@app.get("/auth/instagram/callback", response_class=HTMLResponse)
-async def instagram_callback(request: Request, code: str = "", state: str = "", error: str = ""):
+@app.get(
+    "/auth/instagram/callback",
+    response_class=HTMLResponse,
+)
+async def instagram_callback(
+    request: Request,
+    code: str = "",
+    state: str = "",
+    error: str = "",
+):
     if error:
-        return HTMLResponse(f"Connexion Instagram annulée/refusée: {error}", status_code=400)
-    try:
-        serializer.loads(state)
-    except BadSignature:
-        return HTMLResponse("État OAuth invalide.", status_code=400)
-    if not code:
-        return HTMLResponse("Code OAuth manquant.", status_code=400)
-    try:
-        token_data = await exchange_code_for_token(code)
-    except InstagramError as exc:
-        return HTMLResponse(str(exc), status_code=502)
+        return HTMLResponse(
+            "Connexion Instagram "
+            f"annulée/refusée: {error}",
+            status_code=400,
+        )
 
-    # V1 deliberately does not persist secrets in Render's ephemeral filesystem.
-    # The returned values should be copied into Render environment variables.
-    token = token_data.get("access_token", "")
-    user_id = token_data.get("user_id", "")
-    masked = token[:6] + "…" + token[-4:] if len(token) > 12 else "(reçu)"
+    try:
+        serializer.loads(
+            state
+        )
+
+    except BadSignature:
+        return HTMLResponse(
+            "État OAuth invalide.",
+            status_code=400,
+        )
+
+    if not code:
+        return HTMLResponse(
+            "Code OAuth manquant.",
+            status_code=400,
+        )
+
+    try:
+        token_data = (
+            await exchange_code_for_token(
+                code
+            )
+        )
+
+    except InstagramError as exc:
+        return HTMLResponse(
+            str(exc),
+            status_code=502,
+        )
+
+    token = token_data.get(
+        "access_token",
+        "",
+    )
+
+    user_id = token_data.get(
+        "user_id",
+        "",
+    )
+
+    masked = (
+        token[:6]
+        + "…"
+        + token[-4:]
+        if len(token) > 12
+        else "(reçu)"
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="oauth_success.html",
-        context={"user_id": user_id, "masked_token": masked},
+        context={
+            "user_id": user_id,
+            "masked_token": masked,
+        },
     )
+
+
+# ------------------------------------------------------------
+# Facebook Login for Business
+# ------------------------------------------------------------
+
+@app.get("/auth/facebook")
+async def facebook_business_auth():
+    try:
+        url = (
+            build_facebook_business_login_url()
+        )
+
+        return RedirectResponse(
+            url
+        )
+
+    except InstagramError as exc:
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": str(exc),
+            },
+            status_code=400,
+        )
+
+
+@app.get(
+    "/auth/facebook/callback",
+    response_class=HTMLResponse,
+)
+async def facebook_business_callback():
+    """
+    Meta renvoie access_token et long_lived_token
+    dans le fragment # de l'URL.
+
+    Le serveur ne peut pas lire directement le fragment,
+    donc cette page utilise JavaScript pour le récupérer
+    puis l'envoyer au backend.
+    """
+
+    return HTMLResponse(
+        """
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="utf-8">
+    <meta
+        name="viewport"
+        content="width=device-width,initial-scale=1"
+    >
+    <title>Connexion Meta</title>
+
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            background: #090b10;
+            color: white;
+            padding: 24px;
+        }
+
+        .card {
+            max-width: 650px;
+            margin: 40px auto;
+            background: #141821;
+            border: 1px solid #2b3240;
+            border-radius: 20px;
+            padding: 24px;
+        }
+
+        code {
+            word-break: break-all;
+        }
+
+        .ok {
+            color: #66e3b4;
+        }
+
+        .error {
+            color: #ff7c91;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="card">
+        <h1>Connexion Meta</h1>
+
+        <p id="status">
+            Récupération du compte Instagram…
+        </p>
+
+        <div id="result"></div>
+    </div>
+
+<script>
+(async () => {
+    const status = document.getElementById("status");
+    const result = document.getElementById("result");
+
+    const params = new URLSearchParams(
+        window.location.hash.substring(1)
+    );
+
+    const token =
+        params.get("long_lived_token")
+        || params.get("access_token");
+
+    if (!token) {
+        status.className = "error";
+        status.textContent =
+            "Aucun token reçu depuis Meta.";
+
+        return;
+    }
+
+    try {
+        const response = await fetch(
+            "/api/facebook/resolve-instagram",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type":
+                        "application/json"
+                },
+                body: JSON.stringify({
+                    access_token: token
+                })
+            }
+        );
+
+        const data = await response.json();
+
+        if (!data.ok) {
+            throw new Error(
+                data.error
+                || "Erreur inconnue"
+            );
+        }
+
+        status.className = "ok";
+        status.textContent =
+            "Compte Instagram trouvé ✅";
+
+        result.innerHTML = `
+            <p>
+                Page Facebook :
+                <strong>
+                    ${data.page_name}
+                </strong>
+            </p>
+
+            <p>
+                INSTAGRAM_USER_ID
+            </p>
+
+            <code>
+                ${data.instagram_user_id}
+            </code>
+
+            <p>
+                INSTAGRAM_ACCESS_TOKEN
+            </p>
+
+            <code>
+                ${token}
+            </code>
+
+            <p>
+                Copie maintenant ces deux valeurs
+                dans Render → Environment.
+            </p>
+        `;
+
+    } catch (error) {
+        status.className = "error";
+        status.textContent =
+            "Erreur : " + error.message;
+    }
+})();
+</script>
+</body>
+</html>
+        """
+    )
+
+
+@app.post(
+    "/api/facebook/resolve-instagram"
+)
+async def resolve_instagram_account(
+    payload: dict
+):
+    access_token = str(
+        payload.get(
+            "access_token",
+            "",
+        )
+    ).strip()
+
+    if not access_token:
+        return json_error(
+            "Token Meta manquant."
+        )
+
+    try:
+        account = (
+            await get_instagram_business_account(
+                access_token
+            )
+        )
+
+        return {
+            "ok": True,
+            **account,
+        }
+
+    except InstagramError as exc:
+        return json_error(
+            str(exc),
+            502,
+        )
