@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0c10">
+  <title>Instagram Studio</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">OSCAR • CREATOR TOOL</div>
+      <h1>Instagram Studio</h1>
+    </div>
+    <div class="status-row">
+      <span class="pill {{ 'ok' if cerebras_ready else 'warn' }}">Cerebras {{ '✓' if cerebras_ready else 'à configurer' }}</span>
+      <span class="pill {{ 'ok' if instagram_ready else 'warn' }}">Instagram {{ '✓' if instagram_ready else 'à configurer' }}</span>
+    </div>
+  </header>
+
+  <main class="shell">
+    <nav class="tabs">
+      <button class="tab active" data-tab="composer">Créer</button>
+      <button class="tab" data-tab="drafts">Brouillons <span id="draftCount">0</span></button>
+      <button class="tab" data-tab="settings">Réglages</button>
+    </nav>
+
+    <section id="composer" class="panel active">
+      <div class="grid two">
+        <div class="card">
+          <h2>1. Média</h2>
+          <p class="muted">Import temporaire depuis ton téléphone, ou colle une URL publique.</p>
+          <label class="upload-zone">
+            <input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/x-m4v">
+            <strong>Choisir une vidéo</strong>
+            <span>MP4 / MOV / M4V • max {{ max_upload_mb }} Mo</span>
+          </label>
+          <div class="or">ou</div>
+          <label>URL vidéo publique
+            <input id="videoUrl" type="url" placeholder="https://…">
+          </label>
+          <div id="uploadProgress" class="notice hidden"></div>
+        </div>
+
+        <div class="card">
+          <h2>2. Contexte</h2>
+          <label>Décris la vidéo
+            <textarea id="description" rows="4" placeholder="Ex: passage FPV au-dessus d'une plage au coucher du soleil…"></textarea>
+          </label>
+          <div class="grid two compact">
+            <label>Lieu
+              <input id="location" placeholder="Trincomalee, Sri Lanka">
+            </label>
+            <label>Drone / caméra
+              <input id="drone" placeholder="DJI Avata 2">
+            </label>
+            <label>Langue
+              <select id="language"><option value="fr">Français</option><option value="en">English</option></select>
+            </label>
+            <label>Ton
+              <select id="tone"><option value="cinematic">Cinématique</option><option value="minimal">Minimal</option><option value="engaging">Engageant</option><option value="technical">Technique</option></select>
+            </label>
+          </div>
+          <label>Consignes IA (optionnel)
+            <input id="extra" placeholder="Ex: pas plus de 2 emojis">
+          </label>
+          <button id="generateBtn" class="primary">✨ Générer avec {{ model }}</button>
+        </div>
+      </div>
+
+      <div class="card result-card">
+        <div class="row-between">
+          <h2>3. Publication</h2>
+          <span id="aiBadge" class="pill">Pas encore générée</span>
+        </div>
+        <label>Caption
+          <textarea id="caption" rows="8" placeholder="La caption apparaîtra ici…"></textarea>
+        </label>
+        <label>Hashtags
+          <input id="hashtags" placeholder="#fpv #drone #cinematic">
+        </label>
+        <div class="grid two compact">
+          <label>Alt text
+            <textarea id="altText" rows="3"></textarea>
+          </label>
+          <label>Hook
+            <textarea id="hook" rows="3"></textarea>
+          </label>
+        </div>
+        <div class="actions">
+          <button id="saveDraftBtn" class="secondary">Enregistrer le brouillon</button>
+          <button id="publishBtn" class="danger">Publier le Reel</button>
+        </div>
+        <div id="actionMessage" class="notice hidden"></div>
+      </div>
+    </section>
+
+    <section id="drafts" class="panel">
+      <div class="card">
+        <div class="row-between"><h2>Brouillons locaux</h2><button id="clearDraftsBtn" class="ghost">Tout supprimer</button></div>
+        <p class="muted">Stockés uniquement dans Safari/Chrome sur cet appareil. Aucun mot de passe ni token n'est enregistré ici.</p>
+        <div id="draftList" class="draft-list"></div>
+      </div>
+    </section>
+
+    <section id="settings" class="panel">
+      <div class="card">
+        <h2>État V1</h2>
+        <div class="settings-list">
+          <div><span>Cerebras</span><strong>{{ 'Configuré' if cerebras_ready else 'CEREBRAS_API_KEY manquante' }}</strong></div>
+          <div><span>Modèle</span><strong>{{ model }}</strong></div>
+          <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
+          <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>
+        </div>
+        {% if oauth_ready %}<a class="button-link secondary" href="/auth/instagram">Connecter Instagram</a>{% endif %}
+        <p class="muted small">Les secrets restent des variables d'environnement Render et ne sont jamais intégrés au JavaScript du navigateur.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
