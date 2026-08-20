@@ -113,7 +113,7 @@
           <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
           <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>
         </div>
-        {% if oauth_ready %}<a class="button-link secondary" href="/auth/instagram">Connecter Instagram</a>{% endif %}
+        {% if oauth_ready %}<a class="button-link secondary" href="/auth/facebook">Connecter Instagram</a>{% endif %}
         <p class="muted small">Les secrets restent des variables d'environnement Render et ne sont jamais intégrés au JavaScript du navigateur.</p>
       </div>
     </section>
