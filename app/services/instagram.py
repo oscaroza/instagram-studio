@@ -1,5 +1,5 @@
 import asyncio
-import os
+import json
 from typing import Any
 from urllib.parse import urlencode
 
@@ -22,7 +22,6 @@ def api_url(path: str) -> str:
 
 # ============================================================
 # ANCIEN INSTAGRAM LOGIN
-# Conservé pour ne rien casser dans la V1.
 # ============================================================
 
 def build_authorize_url(state: str) -> str:
@@ -71,7 +70,9 @@ async def exchange_code_for_token(
         "code": code,
     }
 
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(
+        timeout=30
+    ) as client:
         response = await client.post(
             "https://api.instagram.com/oauth/access_token",
             data=data,
@@ -88,19 +89,13 @@ async def exchange_code_for_token(
 
 # ============================================================
 # FACEBOOK LOGIN FOR BUSINESS
+# IG_API_ONBOARDING
 # ============================================================
 
-def build_facebook_business_login_url(
-    state: str,
-) -> str:
+def build_facebook_business_login_url() -> str:
     if not settings.meta_app_id:
         raise InstagramError(
             "META_APP_ID non configuré."
-        )
-
-    if not settings.facebook_config_id:
-        raise InstagramError(
-            "FACEBOOK_CONFIG_ID non configuré."
         )
 
     if not settings.facebook_redirect_uri:
@@ -108,22 +103,29 @@ def build_facebook_business_login_url(
             "FACEBOOK_REDIRECT_URI non configuré."
         )
 
+    extras = json.dumps(
+        {
+            "setup": {
+                "channel": "IG_API_ONBOARDING"
+            }
+        },
+        separators=(",", ":"),
+    )
+
     params = {
         "client_id": settings.meta_app_id,
+        "display": "page",
+        "extras": extras,
         "redirect_uri": settings.facebook_redirect_uri,
-
-        # Configuration Facebook Login for Business créée
-        # dans Meta Developers.
-        "config_id": settings.facebook_config_id,
-
-        # On récupère maintenant un code côté serveur.
-        "response_type": "code",
-
-        # Important avec Facebook Login for Business.
-        "override_default_response_type": "true",
-
-        # Protection CSRF.
-        "state": state,
+        "response_type": "token",
+        "scope": ",".join(
+            [
+                "instagram_basic",
+                "instagram_content_publish",
+                "pages_show_list",
+                "pages_read_engagement",
+            ]
+        ),
     }
 
     return (
@@ -134,81 +136,13 @@ def build_facebook_business_login_url(
     )
 
 
-async def exchange_facebook_code_for_token(
-    code: str,
-) -> dict[str, Any]:
-    """
-    Échange le code renvoyé par Facebook Login for Business
-    contre un access token Meta.
-    """
-
-    meta_app_secret = os.getenv(
-        "META_APP_SECRET",
-        "",
-    ).strip()
-
-    if not settings.meta_app_id:
-        raise InstagramError(
-            "META_APP_ID non configuré."
-        )
-
-    if not meta_app_secret:
-        raise InstagramError(
-            "META_APP_SECRET non configuré dans Render."
-        )
-
-    if not settings.facebook_redirect_uri:
-        raise InstagramError(
-            "FACEBOOK_REDIRECT_URI non configuré."
-        )
-
-    params = {
-        "client_id": settings.meta_app_id,
-        "client_secret": meta_app_secret,
-        "redirect_uri": settings.facebook_redirect_uri,
-        "code": code,
-    }
-
-    async with httpx.AsyncClient(
-        timeout=30
-    ) as client:
-        response = await client.get(
-            api_url("oauth/access_token"),
-            params=params,
-        )
-
-    if response.status_code >= 400:
-        raise InstagramError(
-            "Impossible d'échanger le code Meta contre un token : "
-            f"{response.text[:900]}"
-        )
-
-    data = response.json()
-
-    access_token = data.get(
-        "access_token"
-    )
-
-    if not access_token:
-        raise InstagramError(
-            "Meta n'a pas renvoyé d'access_token."
-        )
-
-    return data
-
-
 # ============================================================
-# RÉCUPÉRATION PAGE + COMPTE INSTAGRAM
+# RÉCUPÉRATION DU COMPTE INSTAGRAM
 # ============================================================
 
 async def get_instagram_business_account(
     access_token: str,
 ) -> dict[str, str]:
-    """
-    Récupère les Pages accessibles et cherche
-    le compte Instagram Business associé.
-    """
-
     params = {
         "fields": (
             "id,"
@@ -254,16 +188,10 @@ async def get_instagram_business_account(
                     ig_account["id"]
                 ),
                 "page_id": str(
-                    page.get(
-                        "id",
-                        "",
-                    )
+                    page.get("id", "")
                 ),
                 "page_name": str(
-                    page.get(
-                        "name",
-                        "",
-                    )
+                    page.get("name", "")
                 ),
             }
 
@@ -274,7 +202,7 @@ async def get_instagram_business_account(
 
 
 # ============================================================
-# PUBLICATION INSTAGRAM
+# PUBLICATION REEL
 # ============================================================
 
 async def create_reel_container(
@@ -384,7 +312,6 @@ async def wait_until_ready(
             )
 
         await asyncio.sleep(5)
-
         elapsed += 5
 
     raise InstagramError(
