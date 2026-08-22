@@ -29,6 +29,18 @@ def test_protected_page_redirects_to_login():
             assert response.headers["location"].startswith("/login")
 
 
+def test_login_uses_numeric_keypad_without_revealing_access_code():
+    with temporary_settings(studio_access_code="123456"):
+        with TestClient(app) as client:
+            response = client.get("/login")
+
+    assert response.status_code == 200
+    assert 'type="password"' in response.text
+    assert 'inputmode="numeric"' in response.text
+    assert 'pattern="[0-9]*"' in response.text
+    assert "123456" not in response.text
+
+
 def test_instagram_callback_requires_studio_session():
     with temporary_settings(studio_access_code="test-only-code"):
         with TestClient(app) as client:

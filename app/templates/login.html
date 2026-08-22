@@ -20,7 +20,7 @@
       <form method="post" action="/login" class="login-form">
         <input type="hidden" name="next" value="{{ next_path }}">
         <label>Code d’accès
-          <input name="access_code" type="password" autocomplete="current-password" required autofocus>
+          <input name="access_code" type="password" inputmode="numeric" pattern="[0-9]*" autocomplete="current-password" required autofocus>
         </label>
         <button class="primary" type="submit">Entrer dans le Studio</button>
       </form>
