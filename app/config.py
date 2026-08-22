@@ -171,6 +171,10 @@ class Settings:
         os.getenv("SCHEDULER_INTERVAL_SECONDS", "30")
     )
 
+    analytics_max_media: int = int(
+        os.getenv("ANALYTICS_MAX_MEDIA", "100")
+    )
+
     # ------------------------------------------------------------
     # Upload
     # ------------------------------------------------------------

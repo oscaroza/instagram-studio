@@ -56,6 +56,10 @@ def ensure_indexes() -> None:
     db.publications.create_index([("library_ids", ASCENDING)])
     db.push_subscriptions.create_index("endpoint", unique=True)
     db.instagram_credentials.create_index("updated_at")
+    db.instagram_media.create_index([("timestamp", ASCENDING)])
+    db.instagram_insight_snapshots.create_index(
+        [("media_id", ASCENDING), ("captured_at", ASCENDING)]
+    )
 
 
 def object_id(value: str) -> ObjectId:

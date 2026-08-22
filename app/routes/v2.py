@@ -6,6 +6,11 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+from app.services.analytics import (
+    AnalyticsError,
+    build_analytics_dashboard,
+    sync_instagram_analytics,
+)
 from app.services.cloudinary_media import (
     CloudinaryMediaError,
     cloudinary_configured,
@@ -142,6 +147,28 @@ async def v2_status():
         "push_ready": push_configured(),
         "trial_reels_enabled": settings.enable_trial_reels,
     }
+
+
+@router.get("/analytics/dashboard")
+async def analytics_dashboard():
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        dashboard = await asyncio.to_thread(build_analytics_dashboard)
+    except Exception:
+        return api_error("Dashboard MongoDB indisponible.", 503)
+    return {"ok": True, **dashboard}
+
+
+@router.post("/analytics/sync")
+async def synchronize_analytics():
+    try:
+        result = await sync_instagram_analytics()
+    except AnalyticsError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Synchronisation Instagram temporairement indisponible.", 503)
+    return {"ok": True, "sync": result}
 
 
 @router.get("/library")

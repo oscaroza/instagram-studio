@@ -99,7 +99,8 @@ def build_authorize_url(state: str) -> str:
         "response_type": "code",
         "scope": (
             "instagram_business_basic,"
-            "instagram_business_content_publish"
+            "instagram_business_content_publish,"
+            "instagram_business_manage_insights"
         ),
         "state": state,
     }

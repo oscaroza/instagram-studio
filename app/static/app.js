@@ -139,6 +139,7 @@ function activateTab(name){
   if(name==='settings')loadPublishingLimit();
   if(name==='library')loadLibrary();
   if(name==='calendar')loadCalendar();
+  if(name==='stats')loadAnalytics();
   if(name==='notifications')refreshPushState();
 }
 for(const tab of document.querySelectorAll('.tab')){
@@ -422,6 +423,64 @@ function renderCalendar(items,start){
 }
 $('calendarPrev').addEventListener('click',()=>{calendarCursor.setMonth(calendarCursor.getMonth()-1);loadCalendar();});
 $('calendarNext').addEventListener('click',()=>{calendarCursor.setMonth(calendarCursor.getMonth()+1);loadCalendar();});
+
+function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
+function renderAnalytics(data){
+  const summary=data.summary||{};
+  $('statsMediaCount').textContent=formatStat(summary.media_count);
+  $('statsMediaKinds').textContent=`${summary.reels||0} Reel(s) • ${summary.photos||0} photo(s) • ${summary.carousels||0} carrousel(s)`;
+  $('statsViews').textContent=formatStat(summary.views);
+  $('statsReach').textContent=formatStat(summary.reach);
+  $('statsEngagement').textContent=`${Number(summary.engagement_rate||0).toFixed(1)} %`;
+  $('statsInteractions').textContent=`${formatStat(summary.interactions)} interaction(s)`;
+  const sync=data.sync||{};
+  $('statsSyncMeta').textContent=sync.last_synced_at?`Dernier relevé : ${new Date(sync.last_synced_at).toLocaleString('fr-FR')} • ${sync.metrics_updated||0} publication(s) mise(s) à jour`:'Aucune synchronisation enregistrée.';
+  if(sync.permission_required&&sync.last_error)setNotice('statsNotice',sync.last_error,'error');
+
+  const findings=$('statsFindings');findings.innerHTML='';
+  for(const text of data.automatic_findings||[]){const item=document.createElement('p');item.textContent=text;findings.appendChild(item);}
+  if(!findings.children.length)findings.innerHTML='<p class="muted">Pas encore assez de données pour formuler une recommandation.</p>';
+
+  const times=$('statsBestTimes');times.innerHTML='';
+  const bestTimes=data.best_times||[];const maxRate=Math.max(...bestTimes.map(item=>Number(item.avg_engagement_rate)||0),1);
+  for(const item of bestTimes){
+    const row=document.createElement('div');row.className='stats-bar-row';row.innerHTML='<div class="stats-bar-label"><strong></strong><span></span></div><div class="stats-bar-track"><div></div></div>';
+    row.querySelector('strong').textContent=`${item.weekday} • ${String(item.hour).padStart(2,'0')} h`;
+    row.querySelector('span').textContent=`${Number(item.avg_engagement_rate||0).toFixed(1)} % • ${item.count} publication(s)`;
+    row.querySelector('.stats-bar-track div').style.width=`${Math.max(4,Number(item.avg_engagement_rate||0)/maxRate*100)}%`;times.appendChild(row);
+  }
+  if(!times.children.length)times.innerHTML='<p class="muted">Aucun créneau comparable.</p>';
+
+  const posts=$('statsPosts');posts.innerHTML='';
+  for(const item of data.top_posts||[]){
+    const row=document.createElement('article');row.className='stats-post';row.innerHTML='<div class="stats-post-main"><span class="pill kind"></span><strong class="hook"></strong><span class="date"></span></div><div class="stats-post-metrics"><span class="views"></span><span class="reach"></span><span class="rate"></span><span class="delta"></span></div><a class="ghost permalink" target="_blank" rel="noopener">Voir</a>';
+    row.querySelector('.kind').textContent={reel:'Reel',photo:'Photo',carousel:'Carrousel'}[item.media_kind]||'Post';
+    row.querySelector('.hook').textContent=item.hook||item.title||'Sans hook enregistré';
+    row.querySelector('.date').textContent=item.timestamp?new Date(item.timestamp).toLocaleString('fr-FR'):'Date indisponible';
+    row.querySelector('.views').textContent=`${formatStat(item.views)} vues`;
+    row.querySelector('.reach').textContent=`${formatStat(item.reach)} portée`;
+    row.querySelector('.rate').textContent=`${Number(item.engagement_rate||0).toFixed(1)} % engagement`;
+    const delta=Number(item.delta_views||0);row.querySelector('.delta').textContent=delta?`${delta>0?'+':''}${formatStat(delta)} vues depuis le relevé précédent`:'Premier relevé';
+    const link=row.querySelector('.permalink');if(item.permalink)link.href=item.permalink;else link.classList.add('hidden');posts.appendChild(row);
+  }
+  if(!posts.children.length)posts.innerHTML='<p class="muted">Aucune publication synchronisée.</p>';
+}
+async function loadAnalytics(){
+  hideNotice('statsNotice');
+  try{const data=await api('/api/analytics/dashboard');renderAnalytics(data);}
+  catch(err){setNotice('statsNotice',err.message,'error');}
+}
+$('syncStatsBtn').addEventListener('click',async()=>{
+  if(!confirm('Synchroniser maintenant les statistiques de tes publications depuis Meta ?'))return;
+  const button=$('syncStatsBtn');button.disabled=true;button.textContent='Synchronisation…';hideNotice('statsNotice');
+  try{
+    const data=await api('/api/analytics/sync',{method:'POST'});
+    await loadAnalytics();
+    if(data.sync.permission_required)setNotice('statsNotice',data.sync.last_error,'error');
+    else setNotice('statsNotice',`${data.sync.metrics_updated} publication(s) synchronisée(s).`,'success');
+  }catch(err){setNotice('statsNotice',err.message,'error');}
+  finally{button.disabled=false;button.textContent='Synchroniser avec Instagram';}
+});
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
 function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked};}

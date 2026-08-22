@@ -151,6 +151,23 @@ def test_studio_sound_controls_and_chime_are_available():
     assert "igstudio.studioSoundEnabled" in script.text
 
 
+def test_v3_stats_dashboard_is_rendered_without_removing_settings():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+
+    assert page.status_code == 200
+    assert 'data-tab="stats"' in page.text
+    assert 'id="stats"' in page.text
+    assert 'id="syncStatsBtn"' in page.text
+    assert 'data-tab="settings"' in page.text
+    assert 'id="settings"' in page.text
+
+
 def test_upload_stays_temporary_even_when_v2_storage_is_configured():
     with temporary_settings(
         studio_access_code="test-only-code",
