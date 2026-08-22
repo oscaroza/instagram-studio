@@ -15,6 +15,61 @@ let lastActivityAt = Date.now();
 let lastSessionTouchAt = 0;
 let sessionIdleTimer = null;
 let studioSessionExpired = false;
+const STUDIO_SOUND_STORAGE_KEY = 'igstudio.studioSoundEnabled';
+let studioAudioContext = null;
+
+function studioSoundEnabled(){
+  try{return localStorage.getItem(STUDIO_SOUND_STORAGE_KEY)!=='false';}catch{return true;}
+}
+function setStudioSoundEnabled(enabled){
+  try{localStorage.setItem(STUDIO_SOUND_STORAGE_KEY,String(enabled));}catch{}
+}
+function studioAudio(){
+  const AudioContextClass=window.AudioContext||window.webkitAudioContext;
+  if(!AudioContextClass)return null;
+  if(!studioAudioContext)studioAudioContext=new AudioContextClass();
+  return studioAudioContext;
+}
+function unlockStudioSound(){
+  if(!studioSoundEnabled())return;
+  const context=studioAudio();
+  if(context?.state==='suspended')context.resume().catch(()=>{});
+}
+function playStudioChime(){
+  if(!studioSoundEnabled())return;
+  const context=studioAudio();
+  if(!context)return;
+  const play=()=>{
+    const start=context.currentTime+0.02;
+    const master=context.createGain();
+    master.gain.setValueAtTime(0.65,start);
+    master.connect(context.destination);
+    [
+      {frequency:783.99,offset:0,duration:0.24,volume:0.11},
+      {frequency:1174.66,offset:0.10,duration:0.38,volume:0.12}
+    ].forEach(note=>{
+      const oscillator=context.createOscillator();
+      const gain=context.createGain();
+      const noteStart=start+note.offset;
+      oscillator.type='sine';
+      oscillator.frequency.setValueAtTime(note.frequency,noteStart);
+      oscillator.frequency.exponentialRampToValueAtTime(note.frequency*1.035,noteStart+note.duration);
+      gain.gain.setValueAtTime(0.0001,noteStart);
+      gain.gain.exponentialRampToValueAtTime(note.volume,noteStart+0.025);
+      gain.gain.exponentialRampToValueAtTime(0.0001,noteStart+note.duration);
+      oscillator.connect(gain);gain.connect(master);
+      oscillator.start(noteStart);oscillator.stop(noteStart+note.duration+0.02);
+    });
+  };
+  if(context.state==='suspended')context.resume().then(play).catch(()=>{});
+  else play();
+}
+function refreshStudioSoundSetting(){
+  const enabled=studioSoundEnabled();
+  $('studioSoundEnabled').checked=enabled;
+  $('studioSoundStatus').textContent=enabled?'Activé sur cet appareil':'Désactivé sur cet appareil';
+  $('studioSoundStatus').className=enabled?'cap-on':'cap-off';
+}
 
 function expireStudioSession(){
   if(studioSessionExpired)return;
@@ -46,6 +101,7 @@ function registerActivity(){
 for(const eventName of ['pointerdown','keydown','touchstart','scroll']){
   window.addEventListener(eventName,registerActivity,{passive:true});
 }
+window.addEventListener('pointerdown',unlockStudioSound,{passive:true});
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState!=='visible')return;
   if(Date.now()-lastActivityAt>=SESSION_IDLE_MS)expireStudioSession();
@@ -251,7 +307,7 @@ $('publishBtn').addEventListener('click',async()=>{
     }
     if(scheduled||music){
       const data=await api('/api/publications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-      if(scheduled){setNotice('actionMessage','Publication programmée ✅','success');activateTab('calendar');}
+      if(scheduled){setNotice('actionMessage','Publication programmée ✅','success');playStudioChime();activateTab('calendar');}
       else{
         try{await navigator.clipboard.writeText(payload.caption);}catch{}
         setNotice('actionMessage','Brouillon Studio enregistré et texte copié. Ajoute maintenant la musique dans Instagram.','success');
@@ -268,6 +324,7 @@ $('publishBtn').addEventListener('click',async()=>{
     setNotice('actionMessage','Instagram prépare la publication. Cela peut prendre un moment.');
     const data=await api('/api/instagram/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     setNotice('actionMessage',`Publié ✅\nMedia ID: ${data.media_id}`,'success');
+    playStudioChime();
   }catch(err){setNotice('actionMessage',err.message,'error');}
   finally{btn.disabled=false;btn.textContent=oldLabel;updatePublicationOptions();}
 });
@@ -278,6 +335,11 @@ async function loadPublishingLimit(){
   catch(err){target.textContent=err.message;target.className='cap-off';}
 }
 $('refreshLimitBtn').addEventListener('click',loadPublishingLimit);
+$('studioSoundEnabled').addEventListener('change',(event)=>{
+  setStudioSoundEnabled(event.target.checked);refreshStudioSoundSetting();
+  if(event.target.checked)playStudioChime();
+});
+$('testStudioSoundBtn').addEventListener('click',playStudioChime);
 
 async function loadV2Status(){
   const pill=$('mongoStatusPill'),text=$('mongoStatusText'),cloudPill=$('cloudinaryStatusPill'),cloudText=$('cloudinaryStatusText');
@@ -383,5 +445,5 @@ $('disablePushBtn').addEventListener('click',async()=>{try{const registration=aw
 $('savePushPrefs').addEventListener('click',async()=>{try{const registration=await pushRegistration();const subscription=await registration.pushManager.getSubscription();if(!subscription)throw new Error('Active d’abord les notifications.');await api('/api/push/subscriptions',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:subscription.endpoint,preferences:pushPreferences()})});setNotice('pushNotice','Préférences enregistrées.','success');}catch(err){setNotice('pushNotice',err.message,'error');}});
 
 if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));}
-updateDraftCount();configureMediaKind(false);updatePublicationOptions();loadV2Status();
+updateDraftCount();configureMediaKind(false);updatePublicationOptions();refreshStudioSoundSetting();loadV2Status();
 const requestedTab=new URLSearchParams(location.search).get('tab');if(requestedTab)activateTab(requestedTab);

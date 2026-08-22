@@ -134,6 +134,23 @@ def test_pwa_assets_are_public_and_service_worker_controls_root():
             assert icon.status_code == 200
 
 
+def test_studio_sound_controls_and_chime_are_available():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert 'id="studioSoundEnabled"' in page.text
+    assert 'id="testStudioSoundBtn"' in page.text
+    assert "playStudioChime()" in script.text
+    assert "igstudio.studioSoundEnabled" in script.text
+
+
 def test_upload_stays_temporary_even_when_v2_storage_is_configured():
     with temporary_settings(
         studio_access_code="test-only-code",
