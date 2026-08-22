@@ -181,9 +181,8 @@ function configureMediaKind(clear=true){
   }
   $('publicUrlBlock').classList.toggle('hidden',kind==='carousel');
   $('publicationModeField').classList.toggle('hidden',kind!=='reel');
-  $('musicOption').classList.toggle('hidden',kind!=='reel');
   $('muteOption').classList.toggle('hidden',kind!=='reel');
-  if(kind!=='reel'){$('publicationMode').value='normal';$('musicEnabled').checked=false;$('muteAudio').checked=false;}
+  if(kind!=='reel'){$('publicationMode').value='normal';$('muteAudio').checked=false;}
   updatePublicationOptions();
 }
 $('mediaKind').addEventListener('change',()=>configureMediaKind(true));
@@ -287,7 +286,7 @@ $('publishBtn').addEventListener('click',async()=>{
     payload.scheduled_for=new Date($('scheduledFor').value).toISOString();
   }
   const kindLabel={reel:'ce Reel',photo:'cette photo',carousel:'ce carrousel'}[payload.media_kind];
-  const question=scheduled?'Programmer cette publication ?':music?'Préparer ce Reel pour Instagram ?':`Publier ${kindLabel} maintenant sur Instagram ?`;
+  const question=scheduled?'Programmer cette publication ?':music?`Préparer ${kindLabel} pour Instagram ?`:`Publier ${kindLabel} maintenant sur Instagram ?`;
   if(!confirm(question))return;
   const btn=$('publishBtn');btn.disabled=true;const oldLabel=btn.textContent;btn.textContent='En cours…';
   try{

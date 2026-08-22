@@ -403,8 +403,6 @@ async def create_publication(payload: dict):
     workflow = str(payload.get("workflow", "auto_publish")).lower()
     if workflow not in {"auto_publish", "manual_music"}:
         return api_error("Workflow de publication invalide.")
-    if media_kind != "reel" and workflow == "manual_music":
-        return api_error("Le workflow musique est réservé aux Reels.")
 
     if mute_audio and library_id and cloudinary_configured():
         try:

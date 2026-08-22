@@ -5,6 +5,7 @@ import imageio_ffmpeg
 import cloudinary.exceptions
 
 from app.config import settings
+from app.routes import v2
 from app.services import local_media, token_store
 from app.services.cloudinary_media import muted_video_url, safe_cloudinary_failure
 
@@ -140,3 +141,42 @@ def test_unknown_cloudinary_error_is_safely_redacted():
     assert "private-cloud" not in result
     assert "private-api-key" not in result
     assert "private-api-secret" not in result
+
+
+def test_manual_music_workflow_accepts_photos_and_carousels(monkeypatch):
+    inserted = []
+
+    class InsertResult:
+        inserted_id = "publication-id"
+
+    class Publications:
+        def insert_one(self, document):
+            inserted.append(document)
+            return InsertResult()
+
+    class Database:
+        publications = Publications()
+
+    monkeypatch.setattr(v2, "database_configured", lambda: True)
+    monkeypatch.setattr(v2, "database", lambda: Database())
+
+    for media_kind, count in (("photo", 1), ("carousel", 2)):
+        payload = {
+            "media_kind": media_kind,
+            "media_items": [
+                {
+                    "url": f"https://studio.example/photo-{index}.jpg",
+                    "media_type": "image",
+                }
+                for index in range(count)
+            ],
+            "workflow": "manual_music",
+            "publication_mode": "normal",
+        }
+        result = asyncio.run(v2.create_publication(payload))
+
+        assert result["ok"] is True
+        assert result["publication"]["status"] == "awaiting_manual"
+        assert result["publication"]["media_kind"] == media_kind
+
+    assert [document["media_kind"] for document in inserted] == ["photo", "carousel"]
