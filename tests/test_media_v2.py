@@ -2,10 +2,11 @@ import asyncio
 import subprocess
 
 import imageio_ffmpeg
+import cloudinary.exceptions
 
 from app.config import settings
 from app.services import local_media, token_store
-from app.services.cloudinary_media import muted_video_url
+from app.services.cloudinary_media import muted_video_url, safe_cloudinary_failure
 
 
 def test_mute_local_video_removes_audio_track(tmp_path, monkeypatch):
@@ -100,3 +101,17 @@ def test_instagram_credentials_fall_back_when_mongodb_is_down(monkeypatch):
 
     assert credentials == ("fallback-user", "fallback-token")
     assert saved is False
+
+
+def test_cloudinary_errors_identify_bad_credentials_without_echoing_values():
+    secret = "never-echo-this-secret"
+    signature_error = safe_cloudinary_failure(
+        cloudinary.exceptions.BadRequest(f"Invalid Signature {secret}")
+    )
+    key_error = safe_cloudinary_failure(
+        cloudinary.exceptions.AuthorizationRequired("Unknown API key")
+    )
+
+    assert "CLOUDINARY_API_SECRET" in signature_error
+    assert "CLOUDINARY_API_KEY" in key_error
+    assert secret not in signature_error

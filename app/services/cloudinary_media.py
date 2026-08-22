@@ -2,6 +2,8 @@ from pathlib import Path
 from typing import Any
 
 import cloudinary
+import cloudinary.api
+import cloudinary.exceptions
 import cloudinary.uploader
 
 from app.config import settings
@@ -9,6 +11,36 @@ from app.config import settings
 
 class CloudinaryMediaError(RuntimeError):
     pass
+
+
+def safe_cloudinary_failure(exc: Exception, action: str = "envoi") -> str:
+    detail = str(exc).lower()
+    if "invalid signature" in detail:
+        return "Cloudinary refuse la signature : CLOUDINARY_API_SECRET est incorrect."
+    if "unknown api key" in detail or "invalid api key" in detail:
+        return "Cloudinary refuse la clé : CLOUDINARY_API_KEY est incorrecte."
+    if "cloud name" in detail or "cloud_name" in detail:
+        return "CLOUDINARY_CLOUD_NAME est incorrect."
+    if "file size" in detail or "too large" in detail or "maximum" in detail:
+        return (
+            "La vidéo dépasse la limite autorisée par ton compte Cloudinary. "
+            "Vérifie Account Settings → Usage Limits."
+        )
+    if "quota" in detail or "usage limit" in detail or "rate limit" in detail:
+        return "Le quota ou la limite d’utilisation Cloudinary est atteint."
+    if "timeout" in detail or "timed out" in detail:
+        return "Cloudinary n’a pas répondu à temps. Réessaie dans un instant."
+    if isinstance(exc, cloudinary.exceptions.AuthorizationRequired):
+        return (
+            "Cloudinary refuse l’authentification. Vérifie le Cloud name, "
+            "l’API Key et l’API Secret dans Render."
+        )
+    if isinstance(exc, cloudinary.exceptions.RateLimited):
+        return "La limite de requêtes Cloudinary est atteinte. Réessaie plus tard."
+    return (
+        f"Cloudinary a refusé l’{action}. Vérifie les trois variables Cloudinary "
+        "dans Render et la limite vidéo de ton compte."
+    )
 
 
 def cloudinary_configured() -> bool:
@@ -44,9 +76,7 @@ def upload_video(path: Path, original_filename: str) -> dict[str, Any]:
             overwrite=False,
         )
     except Exception as exc:
-        raise CloudinaryMediaError(
-            "L’envoi de la vidéo vers Cloudinary a échoué."
-        ) from exc
+        raise CloudinaryMediaError(safe_cloudinary_failure(exc)) from exc
 
     public_id = str(result.get("public_id", ""))
     secure_url = str(result.get("secure_url", ""))
@@ -91,7 +121,7 @@ def upload_video_url(video_url: str) -> dict[str, Any]:
         )
     except Exception as exc:
         raise CloudinaryMediaError(
-            "L’import de la vidéo publique vers Cloudinary a échoué."
+            safe_cloudinary_failure(exc, "import")
         ) from exc
 
     public_id = str(result.get("public_id", ""))
