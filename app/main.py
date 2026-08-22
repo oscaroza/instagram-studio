@@ -59,7 +59,7 @@ UPLOAD_DIR.mkdir(
 
 app = FastAPI(
     title="Instagram Studio V1",
-    version="1.3.0",
+    version="1.3.1",
 )
 
 
@@ -586,12 +586,13 @@ async def facebook_business_auth():
 )
 async def facebook_business_callback():
     """
-    Meta renvoie le token dans le fragment :
+    Meta renvoie le token dans le fragment URL.
 
+    Exemple :
     #access_token=...
     &long_lived_token=...
 
-    Le fragment n'est jamais envoyé au serveur,
+    Le fragment n'est pas envoyé au serveur,
     donc on le récupère côté navigateur.
     """
 
@@ -735,14 +736,55 @@ Récupération du token Meta…
         return;
     }
 
-    const token =
-        params.get(
-            "long_lived_token"
-        )
-        ||
+    /*
+     * IMPORTANT :
+     *
+     * On utilise d'abord access_token.
+     * long_lived_token sert uniquement de fallback.
+     *
+     * Meta peut renvoyer les deux,
+     * mais /me/accounts attend un access token
+     * OAuth valide.
+     */
+    const accessToken =
         params.get(
             "access_token"
         );
+
+    const longLivedToken =
+        params.get(
+            "long_lived_token"
+        );
+
+    const token =
+        accessToken
+        ||
+        longLivedToken;
+
+    /*
+     * Debug :
+     * on ne log PAS le token complet.
+     */
+    console.log(
+        "OAuth fragment keys:",
+        Array.from(
+            params.keys()
+        )
+    );
+
+    console.log(
+        "access_token présent:",
+        Boolean(
+            accessToken
+        )
+    );
+
+    console.log(
+        "long_lived_token présent:",
+        Boolean(
+            longLivedToken
+        )
+    );
 
     if (!token) {
 
@@ -752,14 +794,23 @@ Récupération du token Meta…
         status.textContent =
             "Aucun token reçu depuis Meta.";
 
+        const keys =
+            Array.from(
+                params.keys()
+            );
+
         result.innerHTML =
             `
             <p>
-            Fragment reçu :
+            Paramètres reçus :
             </p>
 
             <div class="value">
-            ${fragment || "(vide)"}
+            ${
+                keys.length
+                ? keys.join(", ")
+                : "(aucun)"
+            }
             </div>
             `;
 
