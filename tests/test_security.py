@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.config import settings
 from app.main import app
+from app.routes import v2
 
 
 @contextmanager
@@ -79,3 +80,51 @@ def test_pwa_assets_are_public_and_service_worker_controls_root():
             assert worker.status_code == 200
             assert worker.headers["service-worker-allowed"] == "/"
             assert icon.status_code == 200
+
+
+def test_upload_stays_temporary_even_when_v2_storage_is_configured():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code", "next": "/"})
+            with temporary_settings(
+                mongodb_uri="mongodb+srv://configured.invalid/",
+                cloudinary_cloud_name="configured",
+                cloudinary_api_key="configured",
+                cloudinary_api_secret="configured",
+            ):
+                response = client.post(
+                    "/api/upload",
+                    files={"file": ("test.mp4", b"temporary-video", "video/mp4")},
+                )
+
+    assert response.status_code == 200
+    assert response.json()["storage"] == "temporary"
+    assert "/media/" in response.json()["url"]
+
+
+def test_unexpected_api_failure_still_returns_safe_json(monkeypatch):
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code", "next": "/"})
+            monkeypatch.setattr(
+                v2,
+                "database",
+                lambda: (_ for _ in ()).throw(RuntimeError("private database detail")),
+            )
+            with temporary_settings(mongodb_uri="mongodb://configured.invalid/"):
+                response = client.get("/api/publications/calendar")
+
+    assert response.status_code == 503
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "ok": False,
+        "error": "Service temporairement indisponible. Réessaie dans un instant.",
+    }

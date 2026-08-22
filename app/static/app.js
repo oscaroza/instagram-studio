@@ -23,7 +23,7 @@ function formatBytes(value){
 async function api(url, options={}){
   const response=await fetch(url,options);
   if(response.status===401){window.location.href='/login';throw new Error('Session expirée.');}
-  let data={}; try{data=await response.json();}catch{throw new Error('Réponse serveur invalide.');}
+  let data={}; try{data=await response.json();}catch{throw new Error(`Réponse serveur invalide (HTTP ${response.status}).`);}
   if(!data.ok) throw new Error(data.error||'Erreur serveur.');
   return data;
 }
@@ -54,8 +54,7 @@ $('videoFile').addEventListener('change',async(e)=>{
     $('videoUrl').value=data.url;
     $('libraryId').value=data.media?.id||'';
     $('thumbnailUrl').value=data.media?.thumbnail_url||'';
-    const storage=data.storage==='cloudinary'?'Cloudinary':'stockage temporaire';
-    setNotice('uploadProgress',`Vidéo prête dans ${storage} (${formatBytes(data.size)}).`,'success');
+    setNotice('uploadProgress',`Vidéo prête avec une URL publique temporaire (${formatBytes(data.size)}).`,'success');
   }catch(err){setNotice('uploadProgress',err.message,'error');}
 });
 
@@ -108,6 +107,7 @@ function publicationPayload(){
     thumbnail_url:$('thumbnailUrl').value,caption:fullCaption,hook:$('hook').value.trim(),
     alt_text:$('altText').value.trim(),publication_mode:$('publicationMode').value,
     workflow:$('musicEnabled').checked?'manual_music':'auto_publish',
+    mute_audio:$('muteAudio').checked,
     timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||'Europe/Paris'
   };
 }
@@ -124,6 +124,12 @@ $('publishBtn').addEventListener('click',async()=>{
   if(!confirm(question))return;
   const btn=$('publishBtn');btn.disabled=true;const oldLabel=btn.textContent;btn.textContent='En cours…';
   try{
+    if(scheduled&&!payload.library_id){
+      setNotice('actionMessage','Copie durable vers Cloudinary avant programmation…');
+      const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_url:payload.video_url,mute_audio:payload.mute_audio})});
+      payload.video_url=promoted.url;payload.library_id=promoted.media.id;payload.thumbnail_url=promoted.media.thumbnail_url||'';
+      $('videoUrl').value=payload.video_url;$('libraryId').value=payload.library_id;$('thumbnailUrl').value=payload.thumbnail_url;
+    }
     if(scheduled||music){
       const data=await api('/api/publications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(scheduled){setNotice('actionMessage','Publication programmée ✅','success');activateTab('calendar');}
@@ -133,6 +139,11 @@ $('publishBtn').addEventListener('click',async()=>{
         if(confirm('Ouvrir Instagram maintenant ?'))window.location.href='instagram://camera';
       }
       return data;
+    }
+    if(payload.mute_audio){
+      setNotice('actionMessage','Création de la version sans son…');
+      const muted=await api('/api/media/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_url:payload.video_url,library_id:payload.library_id})});
+      payload.video_url=muted.url;
     }
     setNotice('actionMessage','Instagram prépare la vidéo. Cela peut prendre un moment.');
     const data=await api('/api/instagram/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -147,6 +158,16 @@ async function loadPublishingLimit(){
   catch(err){target.textContent=err.message;target.className='cap-off';}
 }
 $('refreshLimitBtn').addEventListener('click',loadPublishingLimit);
+
+async function loadV2Status(){
+  const pill=$('mongoStatusPill'),text=$('mongoStatusText');
+  try{
+    const data=await api('/api/v2/status');
+    if(data.mongodb_ready){pill.textContent='MongoDB ✓';pill.className='pill ok';text.textContent='Connecté';text.className='cap-on';}
+    else if(data.mongodb_configured){pill.textContent='MongoDB connexion impossible';pill.className='pill warn';text.textContent='Connexion Atlas impossible';text.className='cap-off';}
+    else{pill.textContent='MongoDB à configurer';pill.className='pill warn';text.textContent='MONGODB_URI manquante';text.className='cap-off';}
+  }catch(err){pill.textContent='MongoDB indisponible';pill.className='pill warn';text.textContent=err.message;text.className='cap-off';}
+}
 
 async function loadLibrary(){
   const root=$('libraryGrid');root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('libraryNotice');
@@ -225,5 +246,5 @@ $('disablePushBtn').addEventListener('click',async()=>{try{const registration=aw
 $('savePushPrefs').addEventListener('click',async()=>{try{const registration=await pushRegistration();const subscription=await registration.pushManager.getSubscription();if(!subscription)throw new Error('Active d’abord les notifications.');await api('/api/push/subscriptions',{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({endpoint:subscription.endpoint,preferences:pushPreferences()})});setNotice('pushNotice','Préférences enregistrées.','success');}catch(err){setNotice('pushNotice',err.message,'error');}});
 
 if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));}
-updateDraftCount();updatePublicationOptions();
+updateDraftCount();updatePublicationOptions();loadV2Status();
 const requestedTab=new URLSearchParams(location.search).get('tab');if(requestedTab)activateTab(requestedTab);

@@ -47,15 +47,11 @@ from app.services.instagram import (
 )
 from app.routes.v2 import router as v2_router
 from app.services.cloudinary_media import (
-    CloudinaryMediaError,
     cloudinary_configured,
-    delete_video as delete_cloudinary_video,
-    upload_video as upload_video_to_cloudinary,
 )
 from app.services.database import (
     database,
     database_configured,
-    serialize_document,
     utc_now,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
@@ -151,17 +147,28 @@ async def require_studio_session(request: Request, call_next):
         or path.startswith("/media/")
     )
 
-    if public or request_is_authenticated(request):
-        response = await call_next(request)
-    elif path.startswith("/api/"):
+    try:
+        if public or request_is_authenticated(request):
+            response = await call_next(request)
+        elif path.startswith("/api/"):
+            response = JSONResponse(
+                {"ok": False, "error": "Session expirée ou accès non autorisé."},
+                status_code=401,
+            )
+        else:
+            response = RedirectResponse(
+                login_redirect_path(path),
+                status_code=303,
+            )
+    except Exception:
+        if not path.startswith("/api/"):
+            raise
         response = JSONResponse(
-            {"ok": False, "error": "Session expirée ou accès non autorisé."},
-            status_code=401,
-        )
-    else:
-        response = RedirectResponse(
-            login_redirect_path(path),
-            status_code=303,
+            {
+                "ok": False,
+                "error": "Service temporairement indisponible. Réessaie dans un instant.",
+            },
+            status_code=503,
         )
 
     if not path.startswith("/static/") and not path.startswith("/media/"):
@@ -505,63 +512,12 @@ async def upload_media(
         f"/media/{target_name}"
     )
 
-    if database_configured() and cloudinary_configured():
-        cloud_media = None
-        try:
-            cloud_media = await asyncio.to_thread(
-                upload_video_to_cloudinary,
-                target,
-                file.filename,
-            )
-            document = {
-                "cloudinary_public_id": cloud_media["public_id"],
-                "secure_url": cloud_media["secure_url"],
-                "thumbnail_url": cloud_media["thumbnail_url"],
-                "bytes": cloud_media["bytes"],
-                "duration": cloud_media["duration"],
-                "format": cloud_media["format"],
-                "width": cloud_media["width"],
-                "height": cloud_media["height"],
-                "original_filename": cloud_media["original_filename"],
-                "created_at": utc_now(),
-            }
-            insert_result = await asyncio.to_thread(
-                database().media.insert_one,
-                document,
-            )
-            target.unlink(missing_ok=True)
-            document["_id"] = insert_result.inserted_id
-            return {
-                "ok": True,
-                "url": cloud_media["secure_url"],
-                "filename": file.filename,
-                "size": cloud_media["bytes"],
-                "storage": "cloudinary",
-                "media": serialize_document(document),
-            }
-        except CloudinaryMediaError as exc:
-            target.unlink(missing_ok=True)
-            return json_error(str(exc), 502)
-        except Exception:
-            if cloud_media and cloud_media.get("public_id"):
-                try:
-                    await asyncio.to_thread(
-                        delete_cloudinary_video,
-                        cloud_media["public_id"],
-                    )
-                except Exception:
-                    pass
-            target.unlink(missing_ok=True)
-            return json_error(
-                "La vidéo a été envoyée, mais son enregistrement MongoDB a échoué.",
-                503,
-            )
-
     return {
         "ok": True,
         "url": public_url,
         "filename": target_name,
         "size": total,
+        "storage": "temporary",
     }
 
 
@@ -704,6 +660,7 @@ async def instagram_publish(
                 "alt_text": str(payload.get("alt_text", "")),
                 "publication_mode": publication_mode,
                 "workflow": "auto_publish",
+                "mute_audio": bool(payload.get("mute_audio")),
                 "status": "published",
                 "creation_id": result.get("creation_id"),
                 "instagram_media_id": result.get("media_id"),

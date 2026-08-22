@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from functools import lru_cache
 from typing import Any
 
+import certifi
 from bson import ObjectId
 from pymongo import ASCENDING, MongoClient
 from pymongo.database import Database
@@ -29,6 +30,8 @@ def mongo_client() -> MongoClient:
         settings.mongodb_uri,
         serverSelectionTimeoutMS=5000,
         connectTimeoutMS=5000,
+        tls=True,
+        tlsCAFile=certifi.where(),
         appname="instagram-studio",
         tz_aware=True,
     )

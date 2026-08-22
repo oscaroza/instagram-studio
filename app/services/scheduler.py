@@ -19,6 +19,7 @@ from app.services.token_store import resolve_instagram_credentials
 
 _scheduler: AsyncIOScheduler | None = None
 _tick_lock = asyncio.Lock()
+_indexes_ready = False
 
 
 async def _send_upcoming_reminders() -> None:
@@ -179,15 +180,24 @@ async def _process_publication(publication: dict) -> None:
 
 
 async def scheduler_tick() -> None:
+    global _indexes_ready
     if not database_configured() or _tick_lock.locked():
         return
     async with _tick_lock:
-        await _send_upcoming_reminders()
-        for _ in range(5):
-            publication = await asyncio.to_thread(_claim_due_publication)
-            if not publication:
-                break
-            await _process_publication(publication)
+        try:
+            if not _indexes_ready:
+                await asyncio.to_thread(ensure_indexes)
+                _indexes_ready = True
+            await _send_upcoming_reminders()
+            for _ in range(5):
+                publication = await asyncio.to_thread(_claim_due_publication)
+                if not publication:
+                    break
+                await _process_publication(publication)
+        except Exception:
+            # APScheduler ne doit pas remplir les logs si Atlas est momentanément
+            # inaccessible. Le prochain tick réessaiera automatiquement.
+            return
 
 
 def _recover_interrupted_publications() -> None:
@@ -205,12 +215,16 @@ def _recover_interrupted_publications() -> None:
 
 
 def start_scheduler() -> AsyncIOScheduler | None:
-    global _scheduler
+    global _scheduler, _indexes_ready
     if not database_configured() or _scheduler is not None:
         return _scheduler
 
-    ensure_indexes()
-    _recover_interrupted_publications()
+    try:
+        ensure_indexes()
+        _recover_interrupted_publications()
+        _indexes_ready = True
+    except Exception:
+        _indexes_ready = False
     _scheduler = AsyncIOScheduler(timezone="UTC")
     _scheduler.add_job(
         scheduler_tick,

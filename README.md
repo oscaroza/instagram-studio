@@ -8,13 +8,15 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels Instagr
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
 - calendrier mensuel et publications programmées côté serveur ;
-- bibliothèque vidéo Cloudinary, indexée dans MongoDB, avec suppression manuelle ;
+- bibliothèque vidéo Cloudinary pour les publications programmées, indexée dans MongoDB, avec suppression manuelle ;
 - notifications Web Push PWA : 30 minutes avant, succès, échec et workflow musique ;
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement.
 
 Les photos et carrousels restent désactivés jusqu’à leur prochaine implémentation. Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram.
+
+Un upload destiné à une publication immédiate conserve le flow V1 et reste sur l’URL publique temporaire de Render. La copie Cloudinary n’est créée qu’au moment où l’utilisateur confirme une programmation. L’option **Couper le son** retire localement la piste audio en publication immédiate et utilise la transformation Cloudinary `audio_codec: none` en programmation.
 
 ## Architecture
 
@@ -54,6 +56,8 @@ VAPID_SUBJECT=mailto:ton-adresse@example.com
 ```
 
 Le mot de passe MongoDB doit être encodé pour une URL s’il contient des caractères spéciaux. Comme un ancien mot de passe a été partagé dans une conversation, il doit être révoqué et remplacé dans Atlas avant le déploiement.
+
+Dans MongoDB Atlas, ajouter l’environnement Render à **Security → Network Access → IP Access List**. Sans cette autorisation, le Studio affiche `Connexion Atlas impossible`. Ne jamais contourner ce problème avec `tlsInsecure=true`.
 
 Pour générer les deux clés VAPID sans les afficher dans le terminal :
 

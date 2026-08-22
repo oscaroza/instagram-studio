@@ -47,13 +47,17 @@ async def save_credentials(
 ) -> bool:
     if not database_configured() or not user_id or not access_token:
         return False
-    await asyncio.to_thread(
-        _save_credentials_sync,
-        user_id=user_id,
-        access_token=access_token,
-        expires_in=expires_in,
-    )
-    return True
+    try:
+        await asyncio.to_thread(
+            _save_credentials_sync,
+            user_id=user_id,
+            access_token=access_token,
+            expires_in=expires_in,
+        )
+        return True
+    except Exception:
+        # OAuth doit continuer et afficher le token même si Atlas est hors ligne.
+        return False
 
 
 async def stored_credentials_exist() -> bool:
@@ -94,7 +98,10 @@ async def resolve_instagram_credentials(
 ) -> tuple[str, str]:
     stored = None
     if database_configured():
-        stored = await asyncio.to_thread(_load_credentials_sync)
+        try:
+            stored = await asyncio.to_thread(_load_credentials_sync)
+        except Exception:
+            stored = None
 
     if not stored:
         return settings.instagram_user_id, settings.instagram_access_token

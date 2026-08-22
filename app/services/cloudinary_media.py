@@ -77,6 +77,60 @@ def upload_video(path: Path, original_filename: str) -> dict[str, Any]:
     }
 
 
+def upload_video_url(video_url: str) -> dict[str, Any]:
+    if not video_url.startswith(("https://", "http://")):
+        raise CloudinaryMediaError("L’URL vidéo à importer est invalide.")
+    configure_cloudinary()
+    try:
+        result = cloudinary.uploader.upload(
+            video_url,
+            resource_type="video",
+            folder=settings.cloudinary_folder,
+            unique_filename=True,
+            overwrite=False,
+        )
+    except Exception as exc:
+        raise CloudinaryMediaError(
+            "L’import de la vidéo publique vers Cloudinary a échoué."
+        ) from exc
+
+    public_id = str(result.get("public_id", ""))
+    secure_url = str(result.get("secure_url", ""))
+    if not public_id or not secure_url:
+        raise CloudinaryMediaError(
+            "Cloudinary n’a pas renvoyé les informations du média."
+        )
+    thumbnail_url = cloudinary.CloudinaryVideo(public_id).build_url(
+        format="jpg",
+        transformation=[
+            {"start_offset": "0"},
+            {"width": 640, "height": 360, "crop": "fill", "quality": "auto"},
+        ],
+        secure=True,
+    )
+    parsed_name = Path(video_url.split("?", 1)[0]).name or "video"
+    return {
+        "public_id": public_id,
+        "secure_url": secure_url,
+        "thumbnail_url": thumbnail_url,
+        "bytes": int(result.get("bytes", 0) or 0),
+        "duration": float(result.get("duration", 0) or 0),
+        "format": str(result.get("format", "mp4")),
+        "width": int(result.get("width", 0) or 0),
+        "height": int(result.get("height", 0) or 0),
+        "original_filename": parsed_name,
+    }
+
+
+def muted_video_url(public_id: str, video_format: str = "mp4") -> str:
+    configure_cloudinary()
+    return cloudinary.CloudinaryVideo(public_id).build_url(
+        format=video_format or "mp4",
+        transformation=[{"audio_codec": "none"}],
+        secure=True,
+    )
+
+
 def delete_video(public_id: str) -> None:
     configure_cloudinary()
     try:

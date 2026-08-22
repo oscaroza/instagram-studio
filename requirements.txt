@@ -7,7 +7,9 @@ python-dotenv==1.1.1
 itsdangerous==2.2.0
 pymongo>=4.10,<5
 dnspython>=2.6,<3
+certifi>=2025.1
 cloudinary>=1.41,<2
 cryptography>=44,<47
 pywebpush>=2,<3
 APScheduler>=3.10,<4
+imageio-ffmpeg>=0.5,<0.7

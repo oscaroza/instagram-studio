@@ -10,6 +10,9 @@ from app.services.cloudinary_media import (
     CloudinaryMediaError,
     cloudinary_configured,
     delete_video,
+    muted_video_url,
+    upload_video,
+    upload_video_url,
 )
 from app.services.database import (
     DatabaseUnavailable,
@@ -25,6 +28,11 @@ from app.services.push_notifications import (
     push_configured,
     save_subscription,
     update_preferences,
+)
+from app.services.local_media import (
+    LocalMediaError,
+    local_media_path,
+    mute_local_video,
 )
 
 
@@ -91,6 +99,94 @@ async def list_library():
     }
 
 
+@router.post("/library/promote")
+async def promote_media_to_library(payload: dict):
+    if not database_configured() or not cloudinary_configured():
+        return api_error("MongoDB ou Cloudinary n’est pas configuré.", 503)
+
+    video_url = str(payload.get("video_url", "")).strip()
+    if not video_url.startswith(("https://", "http://")):
+        return api_error("Une URL vidéo publique est nécessaire.")
+
+    cloud_media = None
+    try:
+        source_path = local_media_path(video_url)
+        if source_path is not None:
+            cloud_media = await asyncio.to_thread(
+                upload_video,
+                source_path,
+                source_path.name,
+            )
+        else:
+            cloud_media = await asyncio.to_thread(upload_video_url, video_url)
+
+        document = {
+            "cloudinary_public_id": cloud_media["public_id"],
+            "secure_url": cloud_media["secure_url"],
+            "thumbnail_url": cloud_media["thumbnail_url"],
+            "bytes": cloud_media["bytes"],
+            "duration": cloud_media["duration"],
+            "format": cloud_media["format"],
+            "width": cloud_media["width"],
+            "height": cloud_media["height"],
+            "original_filename": cloud_media["original_filename"],
+            "created_at": utc_now(),
+        }
+        result = await asyncio.to_thread(database().media.insert_one, document)
+        document["_id"] = result.inserted_id
+    except CloudinaryMediaError as exc:
+        return api_error(str(exc), 502)
+    except Exception:
+        if cloud_media and cloud_media.get("public_id"):
+            try:
+                await asyncio.to_thread(delete_video, cloud_media["public_id"])
+            except Exception:
+                pass
+        return api_error("Impossible d’enregistrer la vidéo programmée.", 503)
+
+    publication_url = cloud_media["secure_url"]
+    if bool(payload.get("mute_audio")):
+        publication_url = muted_video_url(
+            cloud_media["public_id"],
+            cloud_media["format"],
+        )
+    return {
+        "ok": True,
+        "url": publication_url,
+        "media": serialize_document(document),
+    }
+
+
+@router.post("/media/mute")
+async def mute_media(payload: dict):
+    video_url = str(payload.get("video_url", "")).strip()
+    library_id = str(payload.get("library_id", "")).strip()
+
+    if library_id and database_configured() and cloudinary_configured():
+        try:
+            media = await asyncio.to_thread(
+                database().media.find_one,
+                {"_id": object_id(library_id)},
+            )
+            if media:
+                return {
+                    "ok": True,
+                    "url": muted_video_url(
+                        media["cloudinary_public_id"],
+                        media.get("format", "mp4"),
+                    ),
+                    "storage": "cloudinary",
+                }
+        except Exception:
+            return api_error("Bibliothèque MongoDB indisponible.", 503)
+
+    try:
+        result = await asyncio.to_thread(mute_local_video, video_url)
+    except LocalMediaError as exc:
+        return api_error(str(exc))
+    return {"ok": True, **result, "storage": "temporary"}
+
+
 @router.delete("/library/{media_id}")
 async def remove_library_media(media_id: str):
     if not database_configured() or not cloudinary_configured():
@@ -133,6 +229,8 @@ async def create_publication(payload: dict):
         return api_error("MONGODB_URI n’est pas configurée.", 503)
 
     video_url = str(payload.get("video_url", "")).strip()
+    library_id = str(payload.get("library_id", "")).strip() or None
+    mute_audio = bool(payload.get("mute_audio"))
     if not video_url.startswith(("https://", "http://")):
         return api_error("Une vidéo publique Cloudinary est nécessaire.")
 
@@ -145,6 +243,20 @@ async def create_publication(payload: dict):
     workflow = str(payload.get("workflow", "auto_publish")).lower()
     if workflow not in {"auto_publish", "manual_music"}:
         return api_error("Workflow de publication invalide.")
+
+    if mute_audio and library_id and cloudinary_configured():
+        try:
+            media = await asyncio.to_thread(
+                database().media.find_one,
+                {"_id": object_id(library_id)},
+            )
+            if media:
+                video_url = muted_video_url(
+                    media["cloudinary_public_id"],
+                    media.get("format", "mp4"),
+                )
+        except Exception:
+            return api_error("Impossible de préparer la version sans son.", 503)
 
     scheduled_value = payload.get("scheduled_for")
     if scheduled_value:
@@ -164,7 +276,7 @@ async def create_publication(payload: dict):
     document = {
         "title": str(payload.get("title", "Publication Instagram")).strip()[:120]
         or "Publication Instagram",
-        "library_id": str(payload.get("library_id", "")).strip() or None,
+        "library_id": library_id,
         "video_url": video_url,
         "thumbnail_url": str(payload.get("thumbnail_url", "")).strip(),
         "caption": str(payload.get("caption", "")).strip(),
@@ -172,6 +284,7 @@ async def create_publication(payload: dict):
         "alt_text": str(payload.get("alt_text", "")).strip(),
         "publication_mode": publication_mode,
         "workflow": workflow,
+        "mute_audio": mute_audio,
         "status": status,
         "scheduled_for": scheduled_for,
         "timezone": str(payload.get("timezone", "Europe/Paris")),
