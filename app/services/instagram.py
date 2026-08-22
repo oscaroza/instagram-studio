@@ -604,7 +604,108 @@ async def get_instagram_business_account(
 
 
 # ============================================================
-# PUBLICATION REEL
+# PUBLICATION PHOTO ET CARROUSEL
+# ============================================================
+
+async def create_image_container(
+    *,
+    user_id: str,
+    access_token: str,
+    image_url: str,
+    caption: str = "",
+    is_carousel_item: bool = False,
+) -> str:
+    if not user_id:
+        raise InstagramError("INSTAGRAM_USER_ID vide.")
+    if not access_token:
+        raise InstagramError("INSTAGRAM_ACCESS_TOKEN vide.")
+    if not image_url.startswith(("https://", "http://")):
+        raise InstagramError(
+            "L'URL de l’image doit être publique et commencer par https:// ou http://."
+        )
+
+    payload = {
+        "image_url": image_url,
+        "access_token": access_token,
+    }
+    if is_carousel_item:
+        payload["is_carousel_item"] = "true"
+    elif caption:
+        payload["caption"] = caption
+
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            api_url(f"{user_id}/media"),
+            data=payload,
+        )
+
+    if response.status_code >= 400:
+        label = "l’image du carrousel" if is_carousel_item else "la photo"
+        raise InstagramError(
+            f"Création de {label} refusée : "
+            f"{_safe_meta_error(response.text, access_token)}"
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse JSON invalide pour la photo."
+        ) from exc
+
+    creation_id = data.get("id")
+    if not creation_id:
+        raise InstagramError(
+            "Instagram n'a pas renvoyé de creation_id pour la photo."
+        )
+    return str(creation_id)
+
+
+async def create_carousel_container(
+    *,
+    user_id: str,
+    access_token: str,
+    children: list[str],
+    caption: str,
+) -> str:
+    if len(children) < 2 or len(children) > 10:
+        raise InstagramError("Un carrousel doit contenir entre 2 et 10 médias.")
+
+    payload = {
+        "media_type": "CAROUSEL",
+        "children": ",".join(children),
+        "caption": caption,
+        "access_token": access_token,
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            api_url(f"{user_id}/media"),
+            data=payload,
+        )
+
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Création du carrousel refusée : "
+            f"{_safe_meta_error(response.text, access_token)}"
+        )
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse JSON invalide pour le carrousel."
+        ) from exc
+
+    creation_id = data.get("id")
+    if not creation_id:
+        raise InstagramError(
+            "Instagram n'a pas renvoyé de creation_id pour le carrousel."
+        )
+    return str(creation_id)
+
+
+# ============================================================
+# PUBLICATION REEL (FLOW V1 CONSERVÉ)
 # ============================================================
 
 async def create_reel_container(
@@ -851,7 +952,7 @@ async def wait_until_ready(
     )
 
     raise InstagramError(
-        "Instagram traite encore la vidéo après "
+        "Instagram traite encore le média après "
         f"{timeout_seconds} secondes. "
         f"Statut : {final_status}. "
         f"Détail : {final_detail or 'aucun'}."
@@ -961,4 +1062,79 @@ async def publish_reel(
         "creation_id": creation_id,
         "media_id": media_id,
         "publication_mode": "trial" if trial else "normal",
+    }
+
+
+async def publish_photo(
+    *,
+    user_id: str,
+    access_token: str,
+    image_url: str,
+    caption: str,
+) -> dict[str, str]:
+    creation_id = await create_image_container(
+        user_id=user_id,
+        access_token=access_token,
+        image_url=image_url,
+        caption=caption,
+    )
+    await wait_until_ready(
+        creation_id=creation_id,
+        access_token=access_token,
+    )
+    media_id = await publish_container(
+        user_id=user_id,
+        access_token=access_token,
+        creation_id=creation_id,
+    )
+    return {
+        "creation_id": creation_id,
+        "media_id": media_id,
+        "publication_mode": "photo",
+    }
+
+
+async def publish_carousel(
+    *,
+    user_id: str,
+    access_token: str,
+    image_urls: list[str],
+    caption: str,
+) -> dict[str, str]:
+    if len(image_urls) < 2 or len(image_urls) > 10:
+        raise InstagramError("Un carrousel doit contenir entre 2 et 10 photos.")
+
+    children: list[str] = []
+    for image_url in image_urls:
+        child_id = await create_image_container(
+            user_id=user_id,
+            access_token=access_token,
+            image_url=image_url,
+            is_carousel_item=True,
+        )
+        await wait_until_ready(
+            creation_id=child_id,
+            access_token=access_token,
+        )
+        children.append(child_id)
+
+    creation_id = await create_carousel_container(
+        user_id=user_id,
+        access_token=access_token,
+        children=children,
+        caption=caption,
+    )
+    await wait_until_ready(
+        creation_id=creation_id,
+        access_token=access_token,
+    )
+    media_id = await publish_container(
+        user_id=user_id,
+        access_token=access_token,
+        creation_id=creation_id,
+    )
+    return {
+        "creation_id": creation_id,
+        "media_id": media_id,
+        "publication_mode": "carousel",
     }

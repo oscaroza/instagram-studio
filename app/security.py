@@ -19,7 +19,7 @@ def _serializer() -> URLSafeTimedSerializer:
 
 
 def session_max_age_seconds() -> int:
-    return max(1, settings.studio_session_hours) * 60 * 60
+    return max(1, settings.studio_idle_minutes) * 60
 
 
 def access_control_configured() -> bool:

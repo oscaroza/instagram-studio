@@ -9,6 +9,8 @@ from app.config import settings
 from app.services.database import database, database_configured, ensure_indexes, utc_now
 from app.services.instagram import (
     InstagramError,
+    create_carousel_container,
+    create_image_container,
     create_reel_container,
     publish_container,
     wait_until_ready,
@@ -112,15 +114,48 @@ async def _process_publication(publication: dict) -> None:
         if not user_id or not access_token:
             raise InstagramError("Instagram n’est pas connecté.")
 
+        media_kind = publication.get("media_kind", "reel")
+        media_items = publication.get("media_items") or []
         creation_id = publication.get("creation_id")
         if not creation_id:
-            creation_id = await create_reel_container(
-                user_id=user_id,
-                access_token=access_token,
-                video_url=publication["video_url"],
-                caption=publication.get("caption", ""),
-                trial=publication.get("publication_mode") == "trial",
-            )
+            if media_kind == "photo":
+                image_url = (
+                    media_items[0]["url"] if media_items else publication["image_url"]
+                )
+                creation_id = await create_image_container(
+                    user_id=user_id,
+                    access_token=access_token,
+                    image_url=image_url,
+                    caption=publication.get("caption", ""),
+                )
+            elif media_kind == "carousel":
+                children: list[str] = []
+                for item in media_items:
+                    child_id = await create_image_container(
+                        user_id=user_id,
+                        access_token=access_token,
+                        image_url=item["url"],
+                        is_carousel_item=True,
+                    )
+                    await wait_until_ready(
+                        creation_id=child_id,
+                        access_token=access_token,
+                    )
+                    children.append(child_id)
+                creation_id = await create_carousel_container(
+                    user_id=user_id,
+                    access_token=access_token,
+                    children=children,
+                    caption=publication.get("caption", ""),
+                )
+            else:
+                creation_id = await create_reel_container(
+                    user_id=user_id,
+                    access_token=access_token,
+                    video_url=publication["video_url"],
+                    caption=publication.get("caption", ""),
+                    trial=publication.get("publication_mode") == "trial",
+                )
             await asyncio.to_thread(
                 database().publications.update_one,
                 {"_id": publication_id},
@@ -150,9 +185,13 @@ async def _process_publication(publication: dict) -> None:
                 "$unset": {"last_error": ""},
             },
         )
+        type_label = {
+            "photo": "Photo",
+            "carousel": "Carrousel",
+        }.get(media_kind, "Reel")
         await send_notification(
             preference="published",
-            title="Reel publié ✅",
+            title=f"{type_label} publié ✅",
             body=f"« {title} » a été publié sur Instagram.",
             url="/?tab=calendar",
             tag=f"published-{publication_id}",

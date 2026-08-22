@@ -25,7 +25,7 @@ def safe_cloudinary_failure(exc: Exception, action: str = "envoi") -> str:
         return "CLOUDINARY_CLOUD_NAME est incorrect."
     if "file size" in detail or "too large" in detail or "maximum" in detail:
         return (
-            "La vidéo dépasse la limite autorisée par ton compte Cloudinary. "
+            "Le média dépasse la limite autorisée par ton compte Cloudinary. "
             "Vérifie Account Settings → Usage Limits."
         )
     if "quota" in detail or "usage limit" in detail or "rate limit" in detail:
@@ -134,6 +134,8 @@ def upload_video(path: Path, original_filename: str) -> dict[str, Any]:
         "width": int(result.get("width", 0) or 0),
         "height": int(result.get("height", 0) or 0),
         "original_filename": original_filename,
+        "media_type": "video",
+        "resource_type": "video",
     }
 
 
@@ -179,7 +181,83 @@ def upload_video_url(video_url: str) -> dict[str, Any]:
         "width": int(result.get("width", 0) or 0),
         "height": int(result.get("height", 0) or 0),
         "original_filename": parsed_name,
+        "media_type": "video",
+        "resource_type": "video",
     }
+
+
+def _image_result(result: dict[str, Any], original_filename: str) -> dict[str, Any]:
+    public_id = str(result.get("public_id", ""))
+    secure_url = str(result.get("secure_url", ""))
+    image_format = str(result.get("format", "")).lower()
+    if not public_id or not secure_url:
+        raise CloudinaryMediaError(
+            "Cloudinary n’a pas renvoyé les informations de la photo."
+        )
+    if image_format not in {"jpg", "jpeg"}:
+        try:
+            cloudinary.uploader.destroy(public_id, resource_type="image")
+        except Exception:
+            pass
+        raise CloudinaryMediaError(
+            "Instagram accepte uniquement les photos JPEG (.jpg ou .jpeg)."
+        )
+
+    thumbnail_url = cloudinary.CloudinaryImage(public_id).build_url(
+        transformation=[
+            {"width": 480, "height": 480, "crop": "fill", "quality": "auto"},
+        ],
+        secure=True,
+    )
+    return {
+        "public_id": public_id,
+        "secure_url": secure_url,
+        "thumbnail_url": thumbnail_url,
+        "bytes": int(result.get("bytes", 0) or 0),
+        "duration": 0.0,
+        "format": image_format,
+        "width": int(result.get("width", 0) or 0),
+        "height": int(result.get("height", 0) or 0),
+        "original_filename": original_filename,
+        "media_type": "image",
+        "resource_type": "image",
+    }
+
+
+def upload_image(path: Path, original_filename: str) -> dict[str, Any]:
+    configure_cloudinary()
+    try:
+        result = cloudinary.uploader.upload(
+            str(path),
+            resource_type="image",
+            folder=settings.cloudinary_folder,
+            use_filename=True,
+            unique_filename=True,
+            overwrite=False,
+        )
+    except Exception as exc:
+        raise CloudinaryMediaError(safe_cloudinary_failure(exc)) from exc
+    return _image_result(result, original_filename)
+
+
+def upload_image_url(image_url: str) -> dict[str, Any]:
+    if not image_url.startswith(("https://", "http://")):
+        raise CloudinaryMediaError("L’URL de la photo à importer est invalide.")
+    configure_cloudinary()
+    try:
+        result = cloudinary.uploader.upload(
+            image_url,
+            resource_type="image",
+            folder=settings.cloudinary_folder,
+            unique_filename=True,
+            overwrite=False,
+        )
+    except Exception as exc:
+        raise CloudinaryMediaError(
+            safe_cloudinary_failure(exc, "import")
+        ) from exc
+    parsed_name = Path(image_url.split("?", 1)[0]).name or "photo.jpg"
+    return _image_result(result, parsed_name)
 
 
 def muted_video_url(public_id: str, video_format: str = "mp4") -> str:
@@ -191,12 +269,13 @@ def muted_video_url(public_id: str, video_format: str = "mp4") -> str:
     )
 
 
-def delete_video(public_id: str) -> None:
+def delete_media(public_id: str, resource_type: str = "video") -> None:
     configure_cloudinary()
+    safe_resource_type = "image" if resource_type == "image" else "video"
     try:
         result = cloudinary.uploader.destroy(
             public_id,
-            resource_type="video",
+            resource_type=safe_resource_type,
             invalidate=True,
         )
     except Exception as exc:
@@ -208,3 +287,7 @@ def delete_video(public_id: str) -> None:
         raise CloudinaryMediaError(
             "Cloudinary a refusé la suppression du média."
         )
+
+
+def delete_video(public_id: str) -> None:
+    delete_media(public_id, "video")

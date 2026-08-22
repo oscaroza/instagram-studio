@@ -43,9 +43,11 @@ from app.services.instagram import (
     exchange_for_long_lived_token,
     get_content_publishing_limit,
     get_instagram_business_account,
+    publish_carousel,
+    publish_photo,
     publish_reel,
 )
-from app.routes.v2 import router as v2_router
+from app.routes.v2 import publication_media_items, router as v2_router
 from app.services.cloudinary_media import (
     cloudinary_configured,
 )
@@ -147,8 +149,9 @@ async def require_studio_session(request: Request, call_next):
         or path.startswith("/media/")
     )
 
+    authenticated = False if public else request_is_authenticated(request)
     try:
-        if public or request_is_authenticated(request):
+        if public or authenticated:
             response = await call_next(request)
         elif path.startswith("/api/"):
             response = JSONResponse(
@@ -173,6 +176,16 @@ async def require_studio_session(request: Request, call_next):
 
     if not path.startswith("/static/") and not path.startswith("/media/"):
         response.headers["Cache-Control"] = "no-store"
+    if authenticated and path != "/logout" and response.status_code < 400:
+        response.set_cookie(
+            key=SESSION_COOKIE,
+            value=create_session_token(),
+            max_age=session_max_age_seconds(),
+            httponly=True,
+            secure=settings.studio_cookie_secure,
+            samesite="lax",
+            path="/",
+        )
     return response
 
 
@@ -267,6 +280,11 @@ async def logout():
     return response
 
 
+@app.post("/api/session/touch")
+async def touch_session():
+    return {"ok": True}
+
+
 # ============================================================
 # HOME
 # ============================================================
@@ -308,6 +326,8 @@ async def home(
             "max_upload_mb": (
                 settings.max_upload_mb
             ),
+
+            "session_idle_seconds": session_max_age_seconds(),
 
             "publishing_capabilities": publishing_capabilities(),
             "v2_modules": V2_MODULES,
@@ -440,11 +460,9 @@ async def upload_media(
             "Fichier invalide."
         )
 
-    allowed = {
-        ".mp4",
-        ".mov",
-        ".m4v",
-    }
+    video_extensions = {".mp4", ".mov", ".m4v"}
+    image_extensions = {".jpg", ".jpeg"}
+    allowed = video_extensions | image_extensions
 
     suffix = Path(
         file.filename
@@ -453,7 +471,7 @@ async def upload_media(
     if suffix not in allowed:
         return json_error(
             "Format non pris en charge. "
-            "Utilise MP4, MOV ou M4V."
+            "Utilise MP4, MOV, M4V, JPG ou JPEG."
         )
 
     target_name = (
@@ -466,11 +484,9 @@ async def upload_media(
         / target_name
     )
 
-    limit = (
-        settings.max_upload_mb
-        * 1024
-        * 1024
-    )
+    media_type = "image" if suffix in image_extensions else "video"
+    limit_mb = min(settings.max_upload_mb, 8) if media_type == "image" else settings.max_upload_mb
+    limit = limit_mb * 1024 * 1024
 
     total = 0
 
@@ -496,7 +512,7 @@ async def upload_media(
                     return json_error(
                         "Fichier trop gros. "
                         f"Limite : "
-                        f"{settings.max_upload_mb} Mo.",
+                        f"{limit_mb} Mo.",
                         413,
                     )
 
@@ -506,6 +522,18 @@ async def upload_media(
 
     finally:
         await file.close()
+
+    if media_type == "image":
+        try:
+            is_jpeg = target.read_bytes()[:3] == b"\xff\xd8\xff"
+        except OSError:
+            is_jpeg = False
+        if not is_jpeg:
+            target.unlink(missing_ok=True)
+            return json_error(
+                "La photo n’est pas un véritable fichier JPEG.",
+                400,
+            )
 
     public_url = (
         f"{settings.app_base_url}"
@@ -517,6 +545,7 @@ async def upload_media(
         "url": public_url,
         "filename": target_name,
         "size": total,
+        "media_type": media_type,
         "storage": "temporary",
     }
 
@@ -591,19 +620,20 @@ async def instagram_publishing_limit():
 async def instagram_publish(
     payload: dict
 ):
-    video_url = str(
-        payload.get(
-            "video_url",
-            "",
-        )
-    ).strip()
-
     caption = str(
         payload.get(
             "caption",
             "",
         )
     ).strip()
+
+    media_kind = str(payload.get("media_kind", "reel")).strip().lower()
+    if media_kind not in {"reel", "photo", "carousel"}:
+        return json_error("Type de publication Instagram invalide.")
+    try:
+        media_items = publication_media_items(payload, media_kind)
+    except ValueError as exc:
+        return json_error(str(exc))
 
     publication_mode = str(
         payload.get("publication_mode", "normal")
@@ -612,20 +642,13 @@ async def instagram_publish(
     if publication_mode not in {"normal", "trial"}:
         return json_error("Mode de publication Instagram invalide.")
 
+    if media_kind != "reel" and publication_mode != "normal":
+        return json_error("Le mode Trial est réservé aux Reels.")
+
     if publication_mode == "trial" and not settings.enable_trial_reels:
         return json_error(
             "Les Trial Reels sont désactivés sur ce déploiement.",
             409,
-        )
-
-    if not video_url.startswith(
-        (
-            "https://",
-            "http://",
-        )
-    ):
-        return json_error(
-            "Une URL vidéo publique est nécessaire."
         )
 
     user_id, access_token = await resolve_instagram_credentials()
@@ -641,26 +664,48 @@ async def instagram_publish(
         )
 
     try:
-        result = await publish_reel(
-            user_id=user_id,
-            access_token=access_token,
-            video_url=video_url,
-            caption=caption,
-            trial=publication_mode == "trial",
-        )
+        if media_kind == "photo":
+            result = await publish_photo(
+                user_id=user_id,
+                access_token=access_token,
+                image_url=media_items[0]["url"],
+                caption=caption,
+            )
+        elif media_kind == "carousel":
+            result = await publish_carousel(
+                user_id=user_id,
+                access_token=access_token,
+                image_urls=[item["url"] for item in media_items],
+                caption=caption,
+            )
+        else:
+            result = await publish_reel(
+                user_id=user_id,
+                access_token=access_token,
+                video_url=media_items[0]["url"],
+                caption=caption,
+                trial=publication_mode == "trial",
+            )
 
         if database_configured():
+            library_ids = [
+                item["library_id"] for item in media_items if item["library_id"]
+            ]
             document = {
                 "title": str(payload.get("title", "Publication Instagram"))[:120],
-                "library_id": str(payload.get("library_id", "")) or None,
-                "video_url": video_url,
-                "thumbnail_url": str(payload.get("thumbnail_url", "")),
+                "media_kind": media_kind,
+                "media_items": media_items,
+                "library_ids": library_ids,
+                "library_id": library_ids[0] if len(library_ids) == 1 else None,
+                "video_url": media_items[0]["url"] if media_kind == "reel" else "",
+                "image_url": media_items[0]["url"] if media_kind == "photo" else "",
+                "thumbnail_url": media_items[0].get("thumbnail_url", ""),
                 "caption": caption,
                 "hook": str(payload.get("hook", "")),
                 "alt_text": str(payload.get("alt_text", "")),
                 "publication_mode": publication_mode,
                 "workflow": "auto_publish",
-                "mute_audio": bool(payload.get("mute_audio")),
+                "mute_audio": bool(payload.get("mute_audio")) if media_kind == "reel" else False,
                 "status": "published",
                 "creation_id": result.get("creation_id"),
                 "instagram_media_id": result.get("media_id"),

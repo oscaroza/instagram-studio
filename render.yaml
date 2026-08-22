@@ -15,6 +15,8 @@ services:
         sync: false
       - key: STUDIO_SESSION_HOURS
         value: 24
+      - key: STUDIO_IDLE_MINUTES
+        value: 5
       - key: STUDIO_COOKIE_SECURE
         value: true
       - key: CEREBRAS_MODEL

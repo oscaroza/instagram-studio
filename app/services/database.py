@@ -53,6 +53,7 @@ def ensure_indexes() -> None:
     db.media.create_index([("created_at", ASCENDING)])
     db.publications.create_index([("status", ASCENDING), ("scheduled_for", ASCENDING)])
     db.publications.create_index([("library_id", ASCENDING)])
+    db.publications.create_index([("library_ids", ASCENDING)])
     db.push_subscriptions.create_index("endpoint", unique=True)
     db.instagram_credentials.create_index("updated_at")
 

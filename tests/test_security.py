@@ -55,6 +55,58 @@ def test_login_sets_http_only_session_and_unlocks_studio():
             assert client.get("/").status_code == 200
 
 
+def test_session_cookie_expires_after_five_idle_minutes_and_slides():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        studio_idle_minutes=5,
+    ):
+        with TestClient(app) as client:
+            login_response = client.post(
+                "/login",
+                data={"access_code": "test-only-code", "next": "/"},
+                follow_redirects=False,
+            )
+            assert "Max-Age=300" in login_response.headers["set-cookie"]
+
+            touch_response = client.post("/api/session/touch")
+            assert touch_response.status_code == 200
+            assert "Max-Age=300" in touch_response.headers["set-cookie"]
+
+
+def test_jpeg_upload_accepts_real_jpeg_signature():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            response = client.post(
+                "/api/upload",
+                files={"file": ("photo.jpg", b"\xff\xd8\xfftest-jpeg", "image/jpeg")},
+            )
+
+    assert response.status_code == 200
+    assert response.json()["media_type"] == "image"
+    assert response.json()["url"].endswith(".jpg")
+
+
+def test_fake_jpeg_is_rejected_and_not_exposed():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            response = client.post(
+                "/api/upload",
+                files={"file": ("photo.jpg", b"not-a-jpeg", "image/jpeg")},
+            )
+
+    assert response.status_code == 400
+    assert response.json()["ok"] is False
+
+
 def test_wrong_code_does_not_create_session():
     with temporary_settings(
         studio_access_code="test-only-code",

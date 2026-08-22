@@ -148,3 +148,63 @@ def test_trial_reel_adds_only_documented_trial_params(monkeypatch):
     assert json.loads(FakeAsyncClient.last_request["data"]["trial_params"]) == {
         "graduation_strategy": "MANUAL"
     }
+
+
+def test_single_photo_container_uses_image_url_and_caption(monkeypatch):
+    FakeAsyncClient.response = FakeResponse({"id": "photo-container"})
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = asyncio.run(
+        instagram.create_image_container(
+            user_id="ig-user",
+            access_token="server-secret",
+            image_url="https://example.com/photo.jpg",
+            caption="Caption photo",
+        )
+    )
+
+    payload = FakeAsyncClient.last_request["data"]
+    assert result == "photo-container"
+    assert payload["image_url"] == "https://example.com/photo.jpg"
+    assert payload["caption"] == "Caption photo"
+    assert "is_carousel_item" not in payload
+    assert "media_type" not in payload
+
+
+def test_carousel_image_item_has_no_caption(monkeypatch):
+    FakeAsyncClient.response = FakeResponse({"id": "child-container"})
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    asyncio.run(
+        instagram.create_image_container(
+            user_id="ig-user",
+            access_token="server-secret",
+            image_url="https://example.com/photo.jpg",
+            caption="Must stay on parent",
+            is_carousel_item=True,
+        )
+    )
+
+    payload = FakeAsyncClient.last_request["data"]
+    assert payload["is_carousel_item"] == "true"
+    assert "caption" not in payload
+
+
+def test_carousel_parent_uses_ordered_children(monkeypatch):
+    FakeAsyncClient.response = FakeResponse({"id": "carousel-container"})
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = asyncio.run(
+        instagram.create_carousel_container(
+            user_id="ig-user",
+            access_token="server-secret",
+            children=["child-1", "child-2", "child-3"],
+            caption="Caption carousel",
+        )
+    )
+
+    payload = FakeAsyncClient.last_request["data"]
+    assert result == "carousel-container"
+    assert payload["media_type"] == "CAROUSEL"
+    assert payload["children"] == "child-1,child-2,child-3"
+    assert payload["caption"] == "Caption carousel"

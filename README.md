@@ -1,22 +1,23 @@
 # Instagram Studio V2
 
-Studio personnel FastAPI pour préparer, programmer et publier des Reels Instagram. La V2 conserve le flow de publication immédiate de la V1 et l’OAuth Instagram direct.
+Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos JPEG et carrousels photo Instagram. La V2 conserve le flow de publication Reel immédiate de la V1 et l’OAuth Instagram direct.
 
 ## Fonctionnalités
 
 - accès par code côté serveur avec cookie de session sécurisé ;
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
+- publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 JPEG ;
 - calendrier mensuel et publications programmées côté serveur ;
-- bibliothèque vidéo Cloudinary pour les publications programmées, indexée dans MongoDB, avec suppression manuelle ;
+- bibliothèque média Cloudinary pour les publications programmées, indexée dans MongoDB, avec suppression manuelle ;
 - notifications Web Push PWA : 30 minutes avant, succès, échec et workflow musique ;
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement.
 
-Les photos et carrousels restent désactivés jusqu’à leur prochaine implémentation. Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram.
+Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram. Ce workflow et le mode Trial restent réservés aux Reels.
 
-Un upload destiné à une publication immédiate conserve le flow V1 et reste sur l’URL publique temporaire de Render. La copie Cloudinary n’est créée qu’au moment où l’utilisateur confirme une programmation. L’option **Couper le son** retire localement la piste audio en publication immédiate et utilise la transformation Cloudinary `audio_codec: none` en programmation.
+Un upload destiné à une publication immédiate conserve le flow V1 et reste sur l’URL publique temporaire de Render. La copie Cloudinary n’est créée qu’au moment où l’utilisateur confirme une programmation. L’option **Couper le son** retire localement la piste audio d’un Reel immédiat et utilise la transformation Cloudinary `audio_codec: none` en programmation.
 
 ## Architecture
 
@@ -25,7 +26,7 @@ iPhone / navigateur
   └─ Instagram Studio PWA sur Render
        ├─ Groq : génération des textes
        ├─ Instagram API : publication et quota
-       ├─ Cloudinary : fichiers vidéo durables
+       ├─ Cloudinary : vidéos et photos durables
        └─ MongoDB Atlas : calendrier, métadonnées, push, token chiffré
 ```
 
@@ -38,6 +39,7 @@ Voir `.env.example` et `render.yaml`. Les secrets ne doivent jamais être commit
 ```env
 APP_BASE_URL=https://TON-SERVICE.onrender.com
 STUDIO_ACCESS_CODE=...
+STUDIO_IDLE_MINUTES=5
 CEREBRAS_API_KEY=TA_CLE_GROQ
 CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
 CEREBRAS_MODEL=openai/gpt-oss-20b
@@ -92,6 +94,10 @@ Le bouton **Connecter Instagram** échange automatiquement le token court contre
 4. Aller dans **Notifications** et appuyer sur **Activer les notifications**.
 
 Web Push nécessite iOS/iPadOS 16.4 ou plus récent et l’application ajoutée à l’écran d’accueil.
+
+## Sécurité de session
+
+La session d’accès est renouvelée uniquement lors d’une interaction avec le Studio. Après 5 minutes sans activité, le serveur refuse les nouvelles actions et l’interface affiche une bannière demandant d’actualiser la page pour se reconnecter. Le même contrôle s’applique au retour dans la PWA après plus de 5 minutes en arrière-plan. Cette déconnexion ne supprime ni le token Instagram chiffré ni les programmations.
 
 ## Programmation
 

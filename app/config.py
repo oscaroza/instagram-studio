@@ -30,6 +30,13 @@ class Settings:
         )
     )
 
+    studio_idle_minutes: int = int(
+        os.getenv(
+            "STUDIO_IDLE_MINUTES",
+            "5",
+        )
+    )
+
     studio_cookie_secure: bool = os.getenv(
         "STUDIO_COOKIE_SECURE",
         "true" if app_base_url.startswith("https://") else "false",

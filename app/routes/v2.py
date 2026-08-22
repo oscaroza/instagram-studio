@@ -9,8 +9,10 @@ from app.config import settings
 from app.services.cloudinary_media import (
     CloudinaryMediaError,
     cloudinary_configured,
-    delete_video,
+    delete_media,
     muted_video_url,
+    upload_image,
+    upload_image_url,
     upload_video,
     upload_video_url,
     verify_cloudinary_connection,
@@ -56,6 +58,59 @@ def parse_datetime(value: Any) -> datetime:
     if parsed.tzinfo is None:
         raise ValueError("Le fuseau horaire est obligatoire.")
     return parsed.astimezone(timezone.utc)
+
+
+def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, str]]:
+    raw_items = payload.get("media_items")
+    if not isinstance(raw_items, list):
+        raw_items = []
+
+    if media_kind == "reel" and not raw_items:
+        raw_items = [
+            {
+                "url": payload.get("video_url", ""),
+                "library_id": payload.get("library_id", ""),
+                "thumbnail_url": payload.get("thumbnail_url", ""),
+                "media_type": "video",
+            }
+        ]
+    elif media_kind == "photo" and not raw_items:
+        raw_items = [
+            {
+                "url": payload.get("image_url") or payload.get("video_url", ""),
+                "library_id": payload.get("library_id", ""),
+                "thumbnail_url": payload.get("thumbnail_url", ""),
+                "media_type": "image",
+            }
+        ]
+
+    expected_type = "video" if media_kind == "reel" else "image"
+    items: list[dict[str, str]] = []
+    for raw_item in raw_items:
+        if not isinstance(raw_item, dict):
+            raise ValueError("Média invalide.")
+        url = str(raw_item.get("url", "")).strip()
+        if not url.startswith(("https://", "http://")):
+            raise ValueError("Chaque média doit avoir une URL publique.")
+        media_type = str(raw_item.get("media_type", expected_type)).lower()
+        if media_type != expected_type:
+            raise ValueError("Le type d’un média ne correspond pas à la publication.")
+        items.append(
+            {
+                "url": url,
+                "library_id": str(raw_item.get("library_id", "")).strip(),
+                "thumbnail_url": str(raw_item.get("thumbnail_url", "")).strip(),
+                "media_type": media_type,
+            }
+        )
+
+    required = 2 if media_kind == "carousel" else 1
+    maximum = 10 if media_kind == "carousel" else 1
+    if len(items) < required or len(items) > maximum:
+        if media_kind == "carousel":
+            raise ValueError("Un carrousel doit contenir entre 2 et 10 photos JPEG.")
+        raise ValueError("Ajoute exactement un média à la publication.")
+    return items
 
 
 @router.get("/v2/status")
@@ -116,21 +171,31 @@ async def promote_media_to_library(payload: dict):
     if not database_configured() or not cloudinary_configured():
         return api_error("MongoDB ou Cloudinary n’est pas configuré.", 503)
 
-    video_url = str(payload.get("video_url", "")).strip()
-    if not video_url.startswith(("https://", "http://")):
-        return api_error("Une URL vidéo publique est nécessaire.")
+    media_type = str(payload.get("media_type", "video")).strip().lower()
+    if media_type not in {"image", "video"}:
+        return api_error("Type de média invalide.")
+    media_url = str(
+        payload.get("media_url")
+        or payload.get("image_url")
+        or payload.get("video_url")
+        or ""
+    ).strip()
+    if not media_url.startswith(("https://", "http://")):
+        return api_error("Une URL publique est nécessaire.")
 
     cloud_media = None
     try:
-        source_path = local_media_path(video_url)
+        source_path = local_media_path(media_url)
         if source_path is not None:
+            upload_function = upload_image if media_type == "image" else upload_video
             cloud_media = await asyncio.to_thread(
-                upload_video,
-                source_path,
-                source_path.name,
+                upload_function, source_path, source_path.name
             )
         else:
-            cloud_media = await asyncio.to_thread(upload_video_url, video_url)
+            upload_function = (
+                upload_image_url if media_type == "image" else upload_video_url
+            )
+            cloud_media = await asyncio.to_thread(upload_function, media_url)
 
         document = {
             "cloudinary_public_id": cloud_media["public_id"],
@@ -142,6 +207,8 @@ async def promote_media_to_library(payload: dict):
             "width": cloud_media["width"],
             "height": cloud_media["height"],
             "original_filename": cloud_media["original_filename"],
+            "media_type": cloud_media["media_type"],
+            "resource_type": cloud_media["resource_type"],
             "created_at": utc_now(),
         }
         result = await asyncio.to_thread(database().media.insert_one, document)
@@ -151,13 +218,17 @@ async def promote_media_to_library(payload: dict):
     except Exception:
         if cloud_media and cloud_media.get("public_id"):
             try:
-                await asyncio.to_thread(delete_video, cloud_media["public_id"])
+                await asyncio.to_thread(
+                    delete_media,
+                    cloud_media["public_id"],
+                    cloud_media.get("resource_type", media_type),
+                )
             except Exception:
                 pass
-        return api_error("Impossible d’enregistrer la vidéo programmée.", 503)
+        return api_error("Impossible d’enregistrer le média programmé.", 503)
 
     publication_url = cloud_media["secure_url"]
-    if bool(payload.get("mute_audio")):
+    if media_type == "video" and bool(payload.get("mute_audio")):
         publication_url = muted_video_url(
             cloud_media["public_id"],
             cloud_media["format"],
@@ -212,7 +283,10 @@ async def remove_library_media(media_id: str):
         media = database().media.find_one({"_id": identifier})
         active = database().publications.find_one(
             {
-                "library_id": media_id,
+                "$or": [
+                    {"library_id": media_id},
+                    {"library_ids": media_id},
+                ],
                 "status": {"$in": ["scheduled", "publishing", "awaiting_manual"]},
             }
         )
@@ -228,7 +302,11 @@ async def remove_library_media(media_id: str):
         )
 
     try:
-        await asyncio.to_thread(delete_video, media["cloudinary_public_id"])
+        await asyncio.to_thread(
+            delete_media,
+            media["cloudinary_public_id"],
+            media.get("resource_type", media.get("media_type", "video")),
+        )
         await asyncio.to_thread(database().media.delete_one, {"_id": identifier})
     except CloudinaryMediaError as exc:
         return api_error(str(exc), 502)
@@ -240,21 +318,31 @@ async def create_publication(payload: dict):
     if not database_configured():
         return api_error("MONGODB_URI n’est pas configurée.", 503)
 
-    video_url = str(payload.get("video_url", "")).strip()
-    library_id = str(payload.get("library_id", "")).strip() or None
-    mute_audio = bool(payload.get("mute_audio"))
-    if not video_url.startswith(("https://", "http://")):
-        return api_error("Une vidéo publique Cloudinary est nécessaire.")
+    media_kind = str(payload.get("media_kind", "reel")).strip().lower()
+    if media_kind not in {"reel", "photo", "carousel"}:
+        return api_error("Type de publication invalide.")
+    try:
+        media_items = publication_media_items(payload, media_kind)
+    except ValueError as exc:
+        return api_error(str(exc))
+
+    library_ids = [item["library_id"] for item in media_items if item["library_id"]]
+    library_id = library_ids[0] if len(library_ids) == 1 else None
+    mute_audio = bool(payload.get("mute_audio")) if media_kind == "reel" else False
 
     publication_mode = str(payload.get("publication_mode", "normal")).lower()
     if publication_mode not in {"normal", "trial"}:
         return api_error("Mode Reel invalide.")
+    if media_kind != "reel" and publication_mode != "normal":
+        return api_error("Le mode Trial est réservé aux Reels.")
     if publication_mode == "trial" and not settings.enable_trial_reels:
         return api_error("Les Trial Reels sont désactivés.", 409)
 
     workflow = str(payload.get("workflow", "auto_publish")).lower()
     if workflow not in {"auto_publish", "manual_music"}:
         return api_error("Workflow de publication invalide.")
+    if media_kind != "reel" and workflow == "manual_music":
+        return api_error("Le workflow musique est réservé aux Reels.")
 
     if mute_audio and library_id and cloudinary_configured():
         try:
@@ -263,7 +351,7 @@ async def create_publication(payload: dict):
                 {"_id": object_id(library_id)},
             )
             if media:
-                video_url = muted_video_url(
+                media_items[0]["url"] = muted_video_url(
                     media["cloudinary_public_id"],
                     media.get("format", "mp4"),
                 )
@@ -272,6 +360,10 @@ async def create_publication(payload: dict):
 
     scheduled_value = payload.get("scheduled_for")
     if scheduled_value:
+        if len(library_ids) != len(media_items):
+            return api_error(
+                "Chaque média programmé doit d’abord être enregistré dans Cloudinary."
+            )
         try:
             scheduled_for = parse_datetime(scheduled_value)
         except ValueError as exc:
@@ -288,9 +380,13 @@ async def create_publication(payload: dict):
     document = {
         "title": str(payload.get("title", "Publication Instagram")).strip()[:120]
         or "Publication Instagram",
+        "media_kind": media_kind,
+        "media_items": media_items,
+        "library_ids": library_ids,
         "library_id": library_id,
-        "video_url": video_url,
-        "thumbnail_url": str(payload.get("thumbnail_url", "")).strip(),
+        "video_url": media_items[0]["url"] if media_kind == "reel" else "",
+        "image_url": media_items[0]["url"] if media_kind == "photo" else "",
+        "thumbnail_url": media_items[0].get("thumbnail_url", ""),
         "caption": str(payload.get("caption", "")).strip(),
         "hook": str(payload.get("hook", "")).strip(),
         "alt_text": str(payload.get("alt_text", "")).strip(),

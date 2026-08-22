@@ -11,9 +11,13 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=8">
+  <link rel="stylesheet" href="/static/styles.css?v=9">
 </head>
-<body>
+<body data-session-idle-seconds="{{ session_idle_seconds }}">
+  <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert">
+    <span>⚠️ Session fermée après {{ session_idle_seconds // 60 }} minutes d’inactivité. Actualise la page pour te reconnecter.</span>
+    <button id="refreshSessionBtn" class="secondary" type="button">Actualiser</button>
+  </div>
   <header class="topbar">
     <div>
       <div class="eyebrow">OSCAR • CREATOR TOOL</div>
@@ -42,23 +46,34 @@
         <div class="card">
           <h2>1. Média</h2>
           <p class="muted">L’import reste temporaire pour une publication immédiate. Il passe dans Cloudinary seulement si tu le programmes.</p>
+          <label>Type de publication
+            <select id="mediaKind">
+              <option value="reel">Reel</option>
+              <option value="photo">Photo JPEG</option>
+              <option value="carousel">Carrousel photo (2 à 10 JPEG)</option>
+            </select>
+          </label>
           <label class="upload-zone">
             <input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/x-m4v">
-            <strong>Choisir une vidéo</strong>
-            <span>MP4 / MOV / M4V • max {{ max_upload_mb }} Mo</span>
+            <strong id="mediaUploadLabel">Choisir une vidéo</strong>
+            <span id="mediaUploadHelp">MP4 / MOV / M4V • max {{ max_upload_mb }} Mo</span>
           </label>
-          <div class="or">ou</div>
-          <label>URL vidéo publique
-            <input id="videoUrl" type="url" placeholder="https://…">
-          </label>
+          <div id="selectedMedia" class="selected-media"></div>
+          <div id="publicUrlBlock">
+            <div class="or">ou</div>
+            <label><span id="mediaUrlLabel">URL vidéo publique</span>
+              <input id="videoUrl" type="url" placeholder="https://…">
+            </label>
+          </div>
           <input id="libraryId" type="hidden">
           <input id="thumbnailUrl" type="hidden">
+          <input id="mediaItemsJson" type="hidden" value="[]">
           <div id="uploadProgress" class="notice hidden"></div>
         </div>
 
         <div class="card">
           <h2>2. Contexte</h2>
-          <label>Décris la vidéo
+          <label>Décris le contenu
             <textarea id="description" rows="4" placeholder="Ex: passage FPV au-dessus d'une plage au coucher du soleil…"></textarea>
           </label>
           <div class="grid two compact">
@@ -93,7 +108,7 @@
         <label>Hashtags
           <input id="hashtags" placeholder="#fpv #drone #cinematic">
         </label>
-        <label>Mode Reel
+        <label id="publicationModeField">Mode Reel
           <select id="publicationMode">
             <option value="normal">Reel normal</option>
             <option value="trial" {{ '' if trial_reels_enabled else 'disabled' }}>Trial Reel{{ '' if trial_reels_enabled else ' — activation contrôlée requise' }}</option>
@@ -101,8 +116,8 @@
         </label>
         <div class="option-grid">
           <label class="toggle-row"><input id="scheduleEnabled" type="checkbox"><span>Publier plus tard</span></label>
-          <label class="toggle-row"><input id="musicEnabled" type="checkbox"><span>Ajouter une musique dans Instagram</span></label>
-          <label class="toggle-row"><input id="muteAudio" type="checkbox"><span>Couper le son de la vidéo</span></label>
+          <label id="musicOption" class="toggle-row"><input id="musicEnabled" type="checkbox"><span>Ajouter une musique dans Instagram</span></label>
+          <label id="muteOption" class="toggle-row"><input id="muteAudio" type="checkbox"><span>Couper le son de la vidéo</span></label>
         </div>
         <div id="scheduleFields" class="schedule-fields hidden">
           <label>Date et heure
@@ -208,6 +223,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=8"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>
