@@ -536,13 +536,7 @@ async def instagram_callback(
         "",
     )
 
-    masked = (
-        token[:6]
-        + "…"
-        + token[-4:]
-        if len(token) > 12
-        else "(reçu)"
-    )
+    masked = token
 
     return templates.TemplateResponse(
         request=request,
