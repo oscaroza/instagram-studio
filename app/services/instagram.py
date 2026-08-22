@@ -24,6 +24,62 @@ def api_url(path: str) -> str:
     )
 
 
+def _safe_meta_error(text: str, *secret_values: str) -> str:
+    safe_text = text
+    for secret_value in secret_values:
+        if secret_value:
+            safe_text = safe_text.replace(secret_value, "[secret redacted]")
+    return safe_text[:1200]
+
+
+async def get_content_publishing_limit(
+    *,
+    user_id: str,
+    access_token: str,
+) -> dict[str, int]:
+    """Return Meta's rolling publishing usage without exposing credentials."""
+    if not user_id or not access_token:
+        raise InstagramError(
+            "Le compteur Instagram nécessite un User ID et un token configurés."
+        )
+
+    params = {
+        "fields": "quota_usage,config",
+        "access_token": access_token,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            api_url(f"{user_id}/content_publishing_limit"),
+            params=params,
+        )
+
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Compteur de publication Instagram indisponible : "
+            f"{_safe_meta_error(response.text, access_token)}"
+        )
+
+    try:
+        payload = response.json()
+        item = payload["data"][0]
+        used = int(item.get("quota_usage", 0))
+        config = item.get("config") or {}
+        total = int(config.get("quota_total", 100))
+        duration = int(config.get("quota_duration", 86400))
+    except (KeyError, IndexError, TypeError, ValueError):
+        raise InstagramError(
+            "Instagram a renvoyé un compteur de publication invalide."
+        )
+
+    return {
+        "used": used,
+        "total": total,
+        "remaining": max(0, total - used),
+        "duration_seconds": duration,
+    }
+
+
 # ============================================================
 # INSTAGRAM LOGIN DIRECT
 # ============================================================
@@ -475,6 +531,7 @@ async def create_reel_container(
     access_token: str,
     video_url: str,
     caption: str,
+    trial: bool = False,
 ) -> str:
     if not user_id:
         raise InstagramError(
@@ -504,6 +561,14 @@ async def create_reel_container(
         "share_to_feed": "true",
         "access_token": access_token,
     }
+
+    if trial:
+        # Meta documents trial_params for Trial Reels. Keep it opt-in so the
+        # established normal Reel request remains byte-for-byte equivalent.
+        payload["trial_params"] = json.dumps(
+            {"graduation_strategy": "MANUAL"},
+            separators=(",", ":"),
+        )
 
     async with httpx.AsyncClient(
         timeout=45
@@ -777,6 +842,7 @@ async def publish_reel(
     access_token: str,
     video_url: str,
     caption: str,
+    trial: bool = False,
 ) -> dict[str, str]:
     # --------------------------------------------------------
     # 1. Création du container
@@ -787,6 +853,7 @@ async def publish_reel(
         access_token=access_token,
         video_url=video_url,
         caption=caption,
+        trial=trial,
     )
 
     # --------------------------------------------------------
@@ -811,4 +878,5 @@ async def publish_reel(
     return {
         "creation_id": creation_id,
         "media_id": media_id,
+        "publication_mode": "trial" if trial else "normal",
     }

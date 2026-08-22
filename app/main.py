@@ -6,6 +6,7 @@ from pathlib import Path
 from fastapi import (
     FastAPI,
     File,
+    Form,
     HTTPException,
     Request,
     UploadFile,
@@ -38,9 +39,21 @@ from app.services.instagram import (
     build_authorize_url,
     build_facebook_business_login_url,
     exchange_code_for_token,
+    get_content_publishing_limit,
     get_instagram_business_account,
     publish_reel,
 )
+from app.security import (
+    SESSION_COOKIE,
+    access_code_matches,
+    access_control_configured,
+    create_session_token,
+    login_redirect_path,
+    request_is_authenticated,
+    safe_next_path,
+    session_max_age_seconds,
+)
+from app.v2.capabilities import V2_MODULES, publishing_capabilities
 
 
 BASE_DIR = Path(
@@ -58,8 +71,8 @@ UPLOAD_DIR.mkdir(
 
 
 app = FastAPI(
-    title="Instagram Studio V1",
-    version="1.3.1",
+    title="Instagram Studio V2",
+    version="2.0.0",
 )
 
 
@@ -83,6 +96,41 @@ serializer = URLSafeSerializer(
 )
 
 
+PUBLIC_PATHS = {
+    "/health",
+    "/login",
+    "/auth/instagram/callback",
+    "/auth/facebook/callback",
+}
+
+
+@app.middleware("http")
+async def require_studio_session(request: Request, call_next):
+    path = request.url.path
+    public = (
+        path in PUBLIC_PATHS
+        or path.startswith("/static/")
+        or path.startswith("/media/")
+    )
+
+    if public or request_is_authenticated(request):
+        response = await call_next(request)
+    elif path.startswith("/api/"):
+        response = JSONResponse(
+            {"ok": False, "error": "Session expirée ou accès non autorisé."},
+            status_code=401,
+        )
+    else:
+        response = RedirectResponse(
+            login_redirect_path(path),
+            status_code=303,
+        )
+
+    if not path.startswith("/static/") and not path.startswith("/media/"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def json_error(
     message: str,
     status_code: int = 400,
@@ -94,6 +142,84 @@ def json_error(
         },
         status_code=status_code,
     )
+
+
+# ============================================================
+# STUDIO ACCESS
+# ============================================================
+
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/"):
+    if request_is_authenticated(request):
+        return RedirectResponse(safe_next_path(next), status_code=303)
+
+    return templates.TemplateResponse(
+        request=request,
+        name="login.html",
+        context={
+            "configured": access_control_configured(),
+            "next_path": safe_next_path(next),
+            "error": "",
+        },
+    )
+
+
+@app.post("/login", response_class=HTMLResponse)
+async def login(
+    request: Request,
+    access_code: str = Form(...),
+    next: str = Form("/"),
+):
+    next_path = safe_next_path(next)
+
+    if not access_control_configured():
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "configured": False,
+                "next_path": next_path,
+                "error": "STUDIO_ACCESS_CODE doit être configuré côté serveur.",
+            },
+            status_code=503,
+        )
+
+    if not access_code_matches(access_code):
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "configured": True,
+                "next_path": next_path,
+                "error": "Code d’accès incorrect.",
+            },
+            status_code=401,
+        )
+
+    response = RedirectResponse(next_path, status_code=303)
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=create_session_token(),
+        max_age=session_max_age_seconds(),
+        httponly=True,
+        secure=settings.studio_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+@app.post("/logout")
+async def logout():
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(
+        SESSION_COOKIE,
+        path="/",
+        secure=settings.studio_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 # ============================================================
@@ -133,6 +259,10 @@ async def home(
             "max_upload_mb": (
                 settings.max_upload_mb
             ),
+
+            "publishing_capabilities": publishing_capabilities(),
+            "v2_modules": V2_MODULES,
+            "trial_reels_enabled": settings.enable_trial_reels,
         },
     )
 
@@ -145,6 +275,8 @@ async def home(
 async def health():
     return {
         "ok": True,
+
+        "access_control_configured": access_control_configured(),
 
         "cerebras_configured": bool(
             settings.cerebras_api_key
@@ -370,6 +502,23 @@ async def serve_media(
 # PUBLICATION INSTAGRAM
 # ============================================================
 
+@app.get("/api/instagram/publishing-limit")
+async def instagram_publishing_limit():
+    if not settings.instagram_access_token or not settings.instagram_user_id:
+        return json_error(
+            "Instagram n’est pas configuré pour lire le compteur.",
+            503,
+        )
+
+    try:
+        result = await get_content_publishing_limit(
+            user_id=settings.instagram_user_id,
+            access_token=settings.instagram_access_token,
+        )
+        return {"ok": True, **result}
+    except InstagramError as exc:
+        return json_error(str(exc), 502)
+
 @app.post(
     "/api/instagram/publish"
 )
@@ -389,6 +538,19 @@ async def instagram_publish(
             "",
         )
     ).strip()
+
+    publication_mode = str(
+        payload.get("publication_mode", "normal")
+    ).strip().lower()
+
+    if publication_mode not in {"normal", "trial"}:
+        return json_error("Mode de publication Instagram invalide.")
+
+    if publication_mode == "trial" and not settings.enable_trial_reels:
+        return json_error(
+            "Les Trial Reels sont désactivés sur ce déploiement.",
+            409,
+        )
 
     if not video_url.startswith(
         (
@@ -430,6 +592,7 @@ async def instagram_publish(
             access_token=access_token,
             video_url=video_url,
             caption=caption,
+            trial=publication_mode == "trial",
         )
 
         return {
@@ -536,14 +699,11 @@ async def instagram_callback(
         "",
     )
 
-    masked = token
-
     return templates.TemplateResponse(
         request=request,
         name="oauth_success.html",
         context={
             "user_id": user_id,
-            "masked_token": masked,
         },
     )
 
@@ -756,31 +916,6 @@ Récupération du token Meta…
         ||
         longLivedToken;
 
-    /*
-     * Debug :
-     * on ne log PAS le token complet.
-     */
-    console.log(
-        "OAuth fragment keys:",
-        Array.from(
-            params.keys()
-        )
-    );
-
-    console.log(
-        "access_token présent:",
-        Boolean(
-            accessToken
-        )
-    );
-
-    console.log(
-        "long_lived_token présent:",
-        Boolean(
-            longLivedToken
-        )
-    );
-
     if (!token) {
 
         status.className =
@@ -890,30 +1025,10 @@ Récupération du token Meta…
             </div>
 
 
-            <p>
-            <strong>
-            INSTAGRAM_ACCESS_TOKEN
-            </strong>
-            </p>
-
-            <div class="value">
-            ${token}
-            </div>
-
-
             <p class="warning">
-            ⚠️ Le token est secret.
-            Ne le partage pas et ne le mets
-            jamais sur GitHub.
-            </p>
-
-
-            <p>
-            Mets ensuite
-            INSTAGRAM_USER_ID
-            et
-            INSTAGRAM_ACCESS_TOKEN
-            dans Render → Environment.
+            Le token a été reçu pour cette vérification,
+            mais il n’est ni affiché ni journalisé.
+            La configuration de production reste dans Render.
             </p>
 
 

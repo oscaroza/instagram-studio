@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0c10">
   <title>Instagram Studio</title>
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=2">
 </head>
 <body>
   <header class="topbar">
@@ -23,6 +23,9 @@
     <nav class="tabs">
       <button class="tab active" data-tab="composer">Créer</button>
       <button class="tab" data-tab="drafts">Brouillons <span id="draftCount">0</span></button>
+      <button class="tab" data-tab="calendar">Calendrier</button>
+      <button class="tab" data-tab="library">Bibliothèque</button>
+      <button class="tab" data-tab="notifications">Notifications</button>
       <button class="tab" data-tab="settings">Réglages</button>
     </nav>
 
@@ -80,6 +83,12 @@
         <label>Hashtags
           <input id="hashtags" placeholder="#fpv #drone #cinematic">
         </label>
+        <label>Mode Reel
+          <select id="publicationMode">
+            <option value="normal">Reel normal</option>
+            <option value="trial" {{ '' if trial_reels_enabled else 'disabled' }}>Trial Reel{{ '' if trial_reels_enabled else ' — activation contrôlée requise' }}</option>
+          </select>
+        </label>
         <div class="grid two compact">
           <label>Alt text
             <textarea id="altText" rows="3"></textarea>
@@ -93,6 +102,30 @@
           <button id="publishBtn" class="danger">Publier le Reel</button>
         </div>
         <div id="actionMessage" class="notice hidden"></div>
+      </div>
+    </section>
+
+    <section id="calendar" class="panel">
+      <div class="card placeholder-card">
+        <span class="pill warn">V2 • préparé</span>
+        <h2>Calendrier et publications programmées</h2>
+        <p class="muted">Le module est isolé du flow V1. La programmation sera activée après ajout d’une base durable et d’un worker fiable; aucune fausse programmation n’est simulée dans le navigateur.</p>
+      </div>
+    </section>
+
+    <section id="library" class="panel">
+      <div class="card placeholder-card">
+        <span class="pill warn">V2 • préparé</span>
+        <h2>Bibliothèque média</h2>
+        <p class="muted">Le stockage Render actuel est éphémère. Cette section attend un stockage objet durable avant d’accepter des médias de production.</p>
+      </div>
+    </section>
+
+    <section id="notifications" class="panel">
+      <div class="card placeholder-card">
+        <span class="pill warn">V2 • préparé</span>
+        <h2>Notifications</h2>
+        <p class="muted">Les événements de publication et d’échec sont prévus, mais aucun canal n’est activé sans configuration explicite.</p>
       </div>
     </section>
 
@@ -112,13 +145,26 @@
           <div><span>Modèle</span><strong>{{ model }}</strong></div>
           <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
           <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>
+          <div><span>Publications API • 24 h</span><strong id="publishingLimit">Chargement…</strong></div>
         </div>
+        <button id="refreshLimitBtn" class="ghost" type="button">Actualiser le compteur</button>
         {% if oauth_ready %}<a class="button-link secondary" href="/auth/instagram">Connecter Instagram</a>{% endif %}
         <p class="muted small">Les secrets restent des variables d'environnement Render et ne sont jamais intégrés au JavaScript du navigateur.</p>
       </div>
+      <div class="card result-card">
+        <h2>Capabilities de publication</h2>
+        <div class="settings-list">
+          {% for capability in publishing_capabilities %}
+          <div><span>{{ capability.label }}</span><strong class="{{ 'cap-on' if capability.app_enabled else 'cap-off' }}">{{ capability.status }}</strong></div>
+          {% endfor %}
+        </div>
+      </div>
+      <form method="post" action="/logout" class="logout-form">
+        <button type="submit" class="ghost">Se déconnecter</button>
+      </form>
     </section>
   </main>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=2"></script>
 </body>
 </html>

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#08090d">
+  <title>Accès • Instagram Studio</title>
+  <link rel="stylesheet" href="/static/styles.css?v=2">
+</head>
+<body>
+  <main class="shell narrow login-shell">
+    <div class="card login-card">
+      <div class="eyebrow">OSCAR • CREATOR TOOL</div>
+      <h1>Instagram Studio</h1>
+      <p class="muted">Entre le code d’accès du Studio. Il reste uniquement côté serveur.</p>
+      {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+      {% if configured %}
+      <form method="post" action="/login" class="login-form">
+        <input type="hidden" name="next" value="{{ next_path }}">
+        <label>Code d’accès
+          <input name="access_code" type="password" autocomplete="current-password" required autofocus>
+        </label>
+        <button class="primary" type="submit">Entrer dans le Studio</button>
+      </form>
+      {% else %}
+      <div class="notice error">Accès verrouillé : configure STUDIO_ACCESS_CODE dans Render.</div>
+      {% endif %}
+    </div>
+  </main>
+</body>
+</html>

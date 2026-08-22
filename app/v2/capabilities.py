@@ -1,0 +1,57 @@
+from dataclasses import dataclass
+
+from app.config import settings
+
+
+@dataclass(frozen=True)
+class Capability:
+    key: str
+    label: str
+    meta_supported: bool
+    app_enabled: bool
+    status: str
+
+
+def publishing_capabilities() -> tuple[Capability, ...]:
+    return (
+        Capability(
+            key="reel",
+            label="Reel normal",
+            meta_supported=True,
+            app_enabled=True,
+            status="Disponible — flow V1 conservé",
+        ),
+        Capability(
+            key="trial_reel",
+            label="Trial Reel",
+            meta_supported=True,
+            app_enabled=settings.enable_trial_reels,
+            status=(
+                "Disponible"
+                if settings.enable_trial_reels
+                else "Supporté par Meta, activation contrôlée requise"
+            ),
+        ),
+        Capability(
+            key="photo",
+            label="Photo JPEG",
+            meta_supported=True,
+            app_enabled=False,
+            status="Prévu pour une prochaine étape V2",
+        ),
+        Capability(
+            key="carousel",
+            label="Carrousel",
+            meta_supported=True,
+            app_enabled=False,
+            status="Prévu pour une prochaine étape V2",
+        ),
+    )
+
+
+V2_MODULES = (
+    ("calendar", "Calendrier", "Architecture préparée, programmation inactive"),
+    ("library", "Bibliothèque", "Stockage durable à choisir avant activation"),
+    ("drafts", "Brouillons", "V1 locale conservée, persistance serveur à venir"),
+    ("notifications", "Notifications", "Canal et préférences à définir"),
+)

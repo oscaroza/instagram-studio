@@ -11,6 +11,12 @@ services:
         value: 3.12.5
       - key: APP_SECRET_KEY
         generateValue: true
+      - key: STUDIO_ACCESS_CODE
+        sync: false
+      - key: STUDIO_SESSION_HOURS
+        value: 24
+      - key: STUDIO_COOKIE_SECURE
+        value: true
       - key: CEREBRAS_MODEL
         value: gpt-oss-120b
       - key: CEREBRAS_BASE_URL
@@ -21,3 +27,5 @@ services:
         value: v23.0
       - key: MAX_UPLOAD_MB
         value: 250
+      - key: ENABLE_TRIAL_REELS
+        value: false

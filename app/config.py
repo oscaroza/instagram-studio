@@ -18,6 +18,23 @@ class Settings:
         "dev-only-change-me",
     )
 
+    studio_access_code: str = os.getenv(
+        "STUDIO_ACCESS_CODE",
+        "",
+    )
+
+    studio_session_hours: int = int(
+        os.getenv(
+            "STUDIO_SESSION_HOURS",
+            "24",
+        )
+    )
+
+    studio_cookie_secure: bool = os.getenv(
+        "STUDIO_COOKIE_SECURE",
+        "true" if app_base_url.startswith("https://") else "false",
+    ).lower() in {"1", "true", "yes", "on"}
+
     # ------------------------------------------------------------
     # IA
     # ------------------------------------------------------------
@@ -108,6 +125,11 @@ class Settings:
         "INSTAGRAM_USER_ID",
         "",
     )
+
+    enable_trial_reels: bool = os.getenv(
+        "ENABLE_TRIAL_REELS",
+        "false",
+    ).lower() in {"1", "true", "yes", "on"}
 
     # ------------------------------------------------------------
     # Upload

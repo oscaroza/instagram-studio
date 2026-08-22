@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const fields = ["videoUrl","description","location","drone","language","tone","extra","caption","hashtags","altText","hook"];
+const fields = ["videoUrl","description","location","drone","language","tone","extra","caption","hashtags","altText","hook","publicationMode"];
 
 function setNotice(id, text, type="") { const el=$(id); el.textContent=text; el.className=`notice ${type}`; }
 function hideNotice(id){ $(id).className="notice hidden"; }
@@ -10,6 +10,7 @@ for (const tab of document.querySelectorAll('.tab')) {
     document.querySelectorAll('.panel').forEach(x=>x.classList.remove('active'));
     tab.classList.add('active'); $(tab.dataset.tab).classList.add('active');
     if(tab.dataset.tab==='drafts') renderDrafts();
+    if(tab.dataset.tab==='settings') loadPublishingLimit();
   });
 }
 
@@ -53,9 +54,26 @@ $('publishBtn').addEventListener('click', async () => {
   const caption=[$('caption').value.trim(),$('hashtags').value.trim()].filter(Boolean).join('\n\n');
   if(!confirm('Publier ce Reel maintenant sur Instagram ?')) return;
   const btn=$('publishBtn');btn.disabled=true;btn.textContent='Publication en cours…';setNotice('actionMessage','Instagram prépare la vidéo. Cela peut prendre un moment.');
-  try {const r=await fetch('/api/instagram/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_url:video,caption})});const d=await r.json();if(!d.ok)throw new Error(d.error||'Publication impossible');setNotice('actionMessage',`Publié ✅\nMedia ID: ${d.media_id}`,'success');}
+  try {const r=await fetch('/api/instagram/publish',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_url:video,caption,publication_mode:$('publicationMode').value})});const d=await r.json();if(!d.ok)throw new Error(d.error||'Publication impossible');setNotice('actionMessage',`Publié ✅\nMedia ID: ${d.media_id}`,'success');}
   catch(err){setNotice('actionMessage',err.message,'error');}
   finally{btn.disabled=false;btn.textContent='Publier le Reel';}
 });
+
+async function loadPublishingLimit(){
+  const target=$('publishingLimit');
+  target.textContent='Chargement…';
+  try {
+    const r=await fetch('/api/instagram/publishing-limit');
+    const d=await r.json();
+    if(!d.ok) throw new Error(d.error||'Compteur indisponible');
+    target.textContent=`${d.used} / ${d.total} (${d.remaining} restantes)`;
+    target.className='cap-on';
+  } catch(err) {
+    target.textContent=err.message;
+    target.className='cap-off';
+  }
+}
+
+$('refreshLimitBtn').addEventListener('click',loadPublishingLimit);
 
 updateDraftCount();

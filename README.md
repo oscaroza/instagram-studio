@@ -1,6 +1,15 @@
-# Instagram Studio V1
+# Instagram Studio V2
 
-Mini studio personnel pour préparer et publier des Reels Instagram avec génération de captions par **Cerebras**.
+Studio personnel sécurisé pour préparer et publier des Reels Instagram. La V2 conserve le flow Reel V1 et ajoute progressivement le gestionnaire.
+
+## Changements V2 sûrs
+
+- Écran d'accès protégé par `STUDIO_ACCESS_CODE` côté serveur.
+- Session signée dans un cookie `HttpOnly`, `SameSite=Lax`, `Secure` sur Render.
+- Compteur Meta réel des publications API sur les dernières 24 h.
+- Socle séparé pour calendrier, programmation, bibliothèque et notifications.
+- Capabilities explicites pour Reel, Trial Reel, photo et carrousel.
+- Trial Reel derrière `ENABLE_TRIAL_REELS=false` par défaut, sans impact sur le Reel normal.
 
 ## Ce que fait la V1
 
@@ -37,9 +46,12 @@ Le stockage vidéo temporaire sert uniquement à la V1/test. Sur Render Free, le
 
 ```env
 APP_BASE_URL=https://TON-SERVICE.onrender.com
+APP_SECRET_KEY=...
+STUDIO_ACCESS_CODE=...
 CEREBRAS_API_KEY=...
 INSTAGRAM_ACCESS_TOKEN=...
 INSTAGRAM_USER_ID=...
+ENABLE_TRIAL_REELS=false
 ```
 
 Pour OAuth Instagram complet :
@@ -50,7 +62,9 @@ INSTAGRAM_APP_SECRET=...
 INSTAGRAM_REDIRECT_URI=https://TON-SERVICE.onrender.com/auth/instagram/callback
 ```
 
-Ne jamais committer `.env`.
+Ne jamais committer `.env`. Le code d'accès, les tokens et les clés ne doivent jamais être envoyés au navigateur ou écrits dans les logs.
+
+`STUDIO_ACCESS_CODE` est obligatoire : si la variable manque, l'application reste verrouillée. Sur Render, `APP_SECRET_KEY` est générée automatiquement et `STUDIO_COOKIE_SECURE=true`.
 
 ## Cerebras
 
@@ -92,10 +106,15 @@ Puis ouvrir `http://localhost:8000`.
 - Le callback OAuth masque le token à l'écran.
 - Le flux OAuth utilise un `state` signé.
 
-## Limites V1
+## État de la V2
 
 - Le stockage temporaire Render peut disparaître à un redémarrage/spin-down.
-- Pas encore de programmation automatique par heure/date.
+- Calendrier et programmation préparés mais volontairement inactifs tant qu'une base durable et un worker fiable ne sont pas installés.
+- Bibliothèque préparée mais inactive tant qu'un stockage objet durable n'est pas configuré.
+- Brouillons V1 toujours stockés localement dans le navigateur.
+- Notifications préparées, sans canal activé par défaut.
+- Photo et carrousel documentés comme supportés par Meta, publication à implémenter dans une étape séparée.
+- Trial Reels documentés officiellement par Meta via `trial_params`; l'activation reste opt-in pour protéger le flow Reel existant.
 - Pas encore de récupération des Insights.
 - Pas encore d'analyse automatique du contenu vidéo par vision.
 - OAuth Meta demandera de terminer la configuration de l'app dans Meta for Developers.
