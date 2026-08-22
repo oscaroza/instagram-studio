@@ -10,6 +10,7 @@ const statusLabels = {
 let calendarCursor = new Date();
 calendarCursor.setDate(1);
 let selectedMediaItems = [];
+let analyticsPosts = [];
 const SESSION_IDLE_MS = Math.max(60,Number(document.body.dataset.sessionIdleSeconds)||300) * 1000;
 let lastActivityAt = Date.now();
 let lastSessionTouchAt = 0;
@@ -425,6 +426,44 @@ $('calendarPrev').addEventListener('click',()=>{calendarCursor.setMonth(calendar
 $('calendarNext').addEventListener('click',()=>{calendarCursor.setMonth(calendarCursor.getMonth()+1);loadCalendar();});
 
 function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
+function analyticsPostLabel(item){return item.hook||item.title||'Sans hook enregistré';}
+function sortedAnalyticsPosts(){
+  const items=[...analyticsPosts];
+  const mode=$('statsSort').value;
+  const numeric=(item,key)=>Number(item[key])||0;
+  const timestamp=(item)=>{const value=Date.parse(item.timestamp||'');return Number.isNaN(value)?0:value;};
+  const alphabetic=(a,b)=>analyticsPostLabel(a).localeCompare(analyticsPostLabel(b),'fr',{sensitivity:'base'});
+  const newestFirst=(a,b)=>timestamp(b)-timestamp(a);
+  const comparators={
+    views_desc:(a,b)=>numeric(b,'views')-numeric(a,'views')||newestFirst(a,b),
+    views_asc:(a,b)=>numeric(a,'views')-numeric(b,'views')||newestFirst(a,b),
+    likes_desc:(a,b)=>numeric(b,'likes')-numeric(a,'likes')||newestFirst(a,b),
+    likes_asc:(a,b)=>numeric(a,'likes')-numeric(b,'likes')||newestFirst(a,b),
+    engagement_desc:(a,b)=>numeric(b,'engagement_rate')-numeric(a,'engagement_rate')||newestFirst(a,b),
+    engagement_asc:(a,b)=>numeric(a,'engagement_rate')-numeric(b,'engagement_rate')||newestFirst(a,b),
+    date_desc:newestFirst,
+    date_asc:(a,b)=>timestamp(a)-timestamp(b),
+    alpha_asc:alphabetic,
+    alpha_desc:(a,b)=>alphabetic(b,a)
+  };
+  return items.sort(comparators[mode]||comparators.views_desc);
+}
+function renderAnalyticsPosts(){
+  const posts=$('statsPosts');posts.innerHTML='';
+  for(const item of sortedAnalyticsPosts()){
+    const row=document.createElement('article');row.className='stats-post';row.innerHTML='<div class="stats-post-main"><span class="pill kind"></span><strong class="hook"></strong><span class="date"></span></div><div class="stats-post-metrics"><span class="views"></span><span class="likes"></span><span class="reach"></span><span class="rate"></span><span class="delta"></span></div><a class="ghost permalink" target="_blank" rel="noopener">Voir</a>';
+    row.querySelector('.kind').textContent={reel:'Reel',photo:'Photo',carousel:'Carrousel'}[item.media_kind]||'Post';
+    row.querySelector('.hook').textContent=analyticsPostLabel(item);
+    row.querySelector('.date').textContent=item.timestamp?new Date(item.timestamp).toLocaleString('fr-FR'):'Date indisponible';
+    row.querySelector('.views').textContent=`${formatStat(item.views)} vues`;
+    row.querySelector('.likes').textContent=`${formatStat(item.likes)} likes`;
+    row.querySelector('.reach').textContent=`${formatStat(item.reach)} portée`;
+    row.querySelector('.rate').textContent=`${Number(item.engagement_rate||0).toFixed(1)} % engagement`;
+    const delta=Number(item.delta_views||0);row.querySelector('.delta').textContent=delta?`${delta>0?'+':''}${formatStat(delta)} vues depuis le relevé précédent`:'Premier relevé';
+    const link=row.querySelector('.permalink');if(item.permalink)link.href=item.permalink;else link.classList.add('hidden');posts.appendChild(row);
+  }
+  if(!posts.children.length)posts.innerHTML='<p class="muted">Aucune publication synchronisée.</p>';
+}
 function renderAssistantReport(report,createdAt=''){
   const root=$('statsAssistantReport');root.innerHTML='';
   if(!report){root.innerHTML='<p class="muted">Synchronise au moins 3 publications, puis lance l’analyse.</p>';$('statsAssistantMeta').textContent='';return;}
@@ -469,19 +508,8 @@ function renderAnalytics(data){
   }
   if(!times.children.length)times.innerHTML='<p class="muted">Aucun créneau comparable.</p>';
 
-  const posts=$('statsPosts');posts.innerHTML='';
-  for(const item of data.top_posts||[]){
-    const row=document.createElement('article');row.className='stats-post';row.innerHTML='<div class="stats-post-main"><span class="pill kind"></span><strong class="hook"></strong><span class="date"></span></div><div class="stats-post-metrics"><span class="views"></span><span class="reach"></span><span class="rate"></span><span class="delta"></span></div><a class="ghost permalink" target="_blank" rel="noopener">Voir</a>';
-    row.querySelector('.kind').textContent={reel:'Reel',photo:'Photo',carousel:'Carrousel'}[item.media_kind]||'Post';
-    row.querySelector('.hook').textContent=item.hook||item.title||'Sans hook enregistré';
-    row.querySelector('.date').textContent=item.timestamp?new Date(item.timestamp).toLocaleString('fr-FR'):'Date indisponible';
-    row.querySelector('.views').textContent=`${formatStat(item.views)} vues`;
-    row.querySelector('.reach').textContent=`${formatStat(item.reach)} portée`;
-    row.querySelector('.rate').textContent=`${Number(item.engagement_rate||0).toFixed(1)} % engagement`;
-    const delta=Number(item.delta_views||0);row.querySelector('.delta').textContent=delta?`${delta>0?'+':''}${formatStat(delta)} vues depuis le relevé précédent`:'Premier relevé';
-    const link=row.querySelector('.permalink');if(item.permalink)link.href=item.permalink;else link.classList.add('hidden');posts.appendChild(row);
-  }
-  if(!posts.children.length)posts.innerHTML='<p class="muted">Aucune publication synchronisée.</p>';
+  analyticsPosts=Array.isArray(data.top_posts)?data.top_posts:[];
+  renderAnalyticsPosts();
   renderAssistantReport(data.assistant_report,data.assistant_report_created_at);
 }
 async function loadAnalytics(){
@@ -510,6 +538,7 @@ $('analyzeStatsBtn').addEventListener('click',async()=>{
   }catch(err){setNotice('statsAssistantNotice',err.message,'error');}
   finally{button.disabled=false;button.textContent='Analyser mes performances';}
 });
+$('statsSort').addEventListener('change',renderAnalyticsPosts);
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
 function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked};}

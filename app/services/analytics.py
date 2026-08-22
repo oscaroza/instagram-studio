@@ -345,14 +345,22 @@ def _post_values(document: dict[str, Any]) -> dict[str, float]:
     metrics = document.get("latest_metrics") or {}
     views = _number(metrics, "views", "plays", "ig_reels_aggregated_all_plays_count")
     reach = _number(metrics, "reach")
+    likes = _number(metrics, "likes")
+    comments = _number(metrics, "comments")
+    saved = _number(metrics, "saved")
+    shares = _number(metrics, "shares")
     interactions = _number(metrics, "total_interactions")
     if not interactions:
-        interactions = sum(_number(metrics, name) for name in ("likes", "comments", "saved", "shares"))
+        interactions = likes + comments + saved + shares
     denominator = reach or views
     engagement_rate = interactions / denominator * 100 if denominator else 0.0
     return {
         "views": views,
         "reach": reach,
+        "likes": likes,
+        "comments": comments,
+        "saved": saved,
+        "shares": shares,
         "interactions": interactions,
         "engagement_rate": engagement_rate,
     }
@@ -492,7 +500,7 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
             "engagement_rate": totals["interactions"] / denominator * 100 if denominator else 0.0,
         },
         "best_times": best_times[:8],
-        "top_posts": posts[:20],
+        "top_posts": posts[:100],
         "automatic_findings": automatic_findings,
         "sync": {
             "last_synced_at": _iso(state.get("last_synced_at")),

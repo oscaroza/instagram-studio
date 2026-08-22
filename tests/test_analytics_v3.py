@@ -106,7 +106,7 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
             "media_kind": "reel",
             "timestamp": datetime(2026, 8, 17, 18, tzinfo=timezone.utc),
             "permalink": "https://instagram.com/p/one",
-            "latest_metrics": {"views": 1000, "reach": 800, "total_interactions": 80},
+            "latest_metrics": {"views": 1000, "reach": 800, "likes": 50, "total_interactions": 80},
             "previous_metrics": {"views": 700, "reach": 600, "total_interactions": 50},
         },
         {
@@ -130,6 +130,7 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     assert dashboard["best_times"][0]["weekday"] == "Lundi"
     assert dashboard["best_times"][0]["hour"] == 18
     assert dashboard["top_posts"][0]["delta_views"] == 300
+    assert dashboard["top_posts"][0]["likes"] == 50
     assert dashboard["automatic_findings"]
 
 
