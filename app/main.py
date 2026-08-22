@@ -121,8 +121,9 @@ async def home(
             ),
 
             "oauth_ready": bool(
-                settings.meta_app_id
-                and settings.facebook_redirect_uri
+                settings.instagram_app_id
+                and settings.instagram_app_secret
+                and settings.instagram_redirect_uri
             ),
 
             "model": (
