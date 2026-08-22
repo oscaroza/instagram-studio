@@ -12,6 +12,10 @@ class InstagramError(RuntimeError):
     pass
 
 
+# ============================================================
+# URL API INSTAGRAM / META
+# ============================================================
+
 def api_url(path: str) -> str:
     return (
         f"{settings.instagram_api_base}/"
@@ -21,7 +25,7 @@ def api_url(path: str) -> str:
 
 
 # ============================================================
-# ANCIEN INSTAGRAM LOGIN
+# INSTAGRAM LOGIN DIRECT
 # ============================================================
 
 def build_authorize_url(state: str) -> str:
@@ -84,12 +88,18 @@ async def exchange_code_for_token(
             f"{response.text[:700]}"
         )
 
-    return response.json()
+    try:
+        return response.json()
+
+    except ValueError:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse OAuth invalide."
+        )
 
 
 # ============================================================
 # FACEBOOK LOGIN FOR BUSINESS
-# IG_API_ONBOARDING
+# ANCIEN FLOW — CONSERVÉ TEMPORAIREMENT
 # ============================================================
 
 def build_facebook_business_login_url() -> str:
@@ -138,20 +148,17 @@ def build_facebook_business_login_url() -> str:
 
 # ============================================================
 # RÉCUPÉRATION DU COMPTE INSTAGRAM
+# ANCIEN FLOW FACEBOOK — CONSERVÉ TEMPORAIREMENT
 # ============================================================
 
 async def get_instagram_business_account(
     access_token: str,
 ) -> dict[str, str]:
     """
-    Recherche le compte Instagram professionnel relié
-    aux Pages accessibles par le token Meta.
+    Ancienne méthode Facebook Login.
 
-    On teste :
-    - instagram_business_account
-    - connected_instagram_account
-
-    Puis on refait une vérification Page par Page.
+    Recherche le compte Instagram professionnel
+    relié aux Pages accessibles par le token Meta.
     """
 
     if not access_token:
@@ -160,7 +167,7 @@ async def get_instagram_business_account(
         )
 
     # --------------------------------------------------------
-    # ÉTAPE 1 : récupérer les Pages disponibles
+    # 1. Récupération des Pages
     # --------------------------------------------------------
 
     params = {
@@ -187,7 +194,13 @@ async def get_instagram_business_account(
             f"{response.text[:1200]}"
         )
 
-    payload = response.json()
+    try:
+        payload = response.json()
+
+    except ValueError:
+        raise InstagramError(
+            "Meta a renvoyé une réponse invalide pour /me/accounts."
+        )
 
     pages = payload.get(
         "data",
@@ -197,13 +210,11 @@ async def get_instagram_business_account(
     if not pages:
         raise InstagramError(
             "Meta accepte le token mais /me/accounts "
-            "ne renvoie aucune Page Facebook. "
-            "Vérifie que la Page Oskyview a bien été autorisée "
-            "pendant Facebook Login for Business."
+            "ne renvoie aucune Page Facebook."
         )
 
     # --------------------------------------------------------
-    # ÉTAPE 2 : chercher directement dans /me/accounts
+    # 2. Recherche directe dans /me/accounts
     # --------------------------------------------------------
 
     for page in pages:
@@ -229,7 +240,6 @@ async def get_instagram_business_account(
             "connected_instagram_account"
         )
 
-        # Cas classique Instagram Graph API
         if (
             isinstance(
                 instagram_business,
@@ -248,7 +258,6 @@ async def get_instagram_business_account(
                 ),
             }
 
-        # Deuxième type de liaison possible
         if (
             isinstance(
                 connected_instagram,
@@ -268,11 +277,7 @@ async def get_instagram_business_account(
             }
 
     # --------------------------------------------------------
-    # ÉTAPE 3 :
-    # refaire une requête Page par Page.
-    #
-    # Meta ne renvoie parfois pas tous les champs imbriqués
-    # directement dans /me/accounts.
+    # 3. Vérification Page par Page
     # --------------------------------------------------------
 
     diagnostics = []
@@ -327,7 +332,21 @@ async def get_instagram_business_account(
 
                 continue
 
-            detail = detail_response.json()
+            try:
+                detail = detail_response.json()
+
+            except ValueError:
+                diagnostics.append(
+                    {
+                        "page_id": page_id,
+                        "page_name": page_name,
+                        "detail_error": (
+                            "Réponse JSON invalide."
+                        ),
+                    }
+                )
+
+                continue
 
             instagram_business = detail.get(
                 "instagram_business_account"
@@ -372,12 +391,10 @@ async def get_instagram_business_account(
                         instagram_business["id"]
                     ),
                     "page_id": page_id,
-                    "page_name": (
-                        str(
-                            detail.get(
-                                "name",
-                                page_name,
-                            )
+                    "page_name": str(
+                        detail.get(
+                            "name",
+                            page_name,
                         )
                     ),
                     "instagram_source": (
@@ -397,12 +414,10 @@ async def get_instagram_business_account(
                         connected_instagram["id"]
                     ),
                     "page_id": page_id,
-                    "page_name": (
-                        str(
-                            detail.get(
-                                "name",
-                                page_name,
-                            )
+                    "page_name": str(
+                        detail.get(
+                            "name",
+                            page_name,
                         )
                     ),
                     "instagram_source": (
@@ -411,9 +426,7 @@ async def get_instagram_business_account(
                 }
 
     # --------------------------------------------------------
-    # Aucun compte trouvé.
-    #
-    # On renvoie un diagnostic SANS access_token.
+    # Aucun compte trouvé
     # --------------------------------------------------------
 
     safe_pages = []
@@ -423,13 +436,11 @@ async def get_instagram_business_account(
             {
                 "id": page.get("id"),
                 "name": page.get("name"),
-
                 "instagram_business_account": (
                     page.get(
                         "instagram_business_account"
                     )
                 ),
-
                 "connected_instagram_account": (
                     page.get(
                         "connected_instagram_account"
@@ -465,6 +476,27 @@ async def create_reel_container(
     video_url: str,
     caption: str,
 ) -> str:
+    if not user_id:
+        raise InstagramError(
+            "INSTAGRAM_USER_ID vide."
+        )
+
+    if not access_token:
+        raise InstagramError(
+            "INSTAGRAM_ACCESS_TOKEN vide."
+        )
+
+    if not video_url.startswith(
+        (
+            "https://",
+            "http://",
+        )
+    ):
+        raise InstagramError(
+            "L'URL de la vidéo doit être publique "
+            "et commencer par https:// ou http://."
+        )
+
     payload = {
         "media_type": "REELS",
         "video_url": video_url,
@@ -486,26 +518,42 @@ async def create_reel_container(
     if response.status_code >= 400:
         raise InstagramError(
             "Création du Reel refusée : "
-            f"{response.text[:900]}"
+            f"{response.text[:1200]}"
         )
 
-    creation_id = response.json().get(
+    try:
+        data = response.json()
+
+    except ValueError:
+        raise InstagramError(
+            "Instagram a accepté la création du Reel "
+            "mais a renvoyé une réponse JSON invalide."
+        )
+
+    creation_id = data.get(
         "id"
     )
 
     if not creation_id:
         raise InstagramError(
-            "Instagram n'a pas renvoyé de creation_id."
+            "Instagram n'a pas renvoyé de creation_id. "
+            f"Réponse : {str(data)[:700]}"
         )
 
-    return creation_id
+    return str(
+        creation_id
+    )
 
+
+# ============================================================
+# STATUT DU CONTAINER
+# ============================================================
 
 async def get_container_status(
     *,
     creation_id: str,
     access_token: str,
-) -> str:
+) -> dict[str, Any]:
     params = {
         "fields": "status_code,status",
         "access_token": access_token,
@@ -524,55 +572,148 @@ async def get_container_status(
     if response.status_code >= 400:
         raise InstagramError(
             "Statut du média indisponible : "
-            f"{response.text[:700]}"
+            f"{response.text[:1200]}"
         )
 
-    data = response.json()
+    try:
+        data = response.json()
 
-    return str(
-        data.get("status_code")
-        or data.get("status")
-        or "UNKNOWN"
-    ).upper()
+    except ValueError:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse "
+            "de statut invalide."
+        )
 
+    return data
+
+
+# ============================================================
+# ATTENTE DU TRAITEMENT INSTAGRAM
+# ============================================================
 
 async def wait_until_ready(
     *,
     creation_id: str,
     access_token: str,
-    timeout_seconds: int = 180,
+    timeout_seconds: int = 300,
 ) -> None:
     elapsed = 0
+    poll_interval = 10
 
     while elapsed < timeout_seconds:
-        status = await get_container_status(
+        data = await get_container_status(
             creation_id=creation_id,
             access_token=access_token,
         )
 
-        if status in {
+        status_code = str(
+            data.get(
+                "status_code",
+                "UNKNOWN",
+            )
+        ).upper()
+
+        status_detail = str(
+            data.get(
+                "status",
+                "",
+            )
+        ).strip()
+
+        # ----------------------------------------------------
+        # Container prêt
+        # ----------------------------------------------------
+
+        if status_code in {
             "FINISHED",
             "PUBLISHED",
         }:
             return
 
-        if status in {
+        # ----------------------------------------------------
+        # Instagram a rejeté le média
+        # ----------------------------------------------------
+
+        if status_code in {
             "ERROR",
             "EXPIRED",
         }:
-            raise InstagramError(
-                f"Traitement Instagram échoué ({status})."
+            safe_response = {
+                key: value
+                for key, value in data.items()
+                if key.lower()
+                not in {
+                    "access_token",
+                    "token",
+                }
+            }
+
+            safe_json = json.dumps(
+                safe_response,
+                ensure_ascii=False,
             )
 
-        await asyncio.sleep(5)
+            raise InstagramError(
+                f"Traitement Instagram échoué ({status_code}). "
+                f"Détail Meta : "
+                f"{status_detail or 'aucun détail fourni'}. "
+                f"Réponse Meta : {safe_json[:1500]}"
+            )
 
-        elapsed += 5
+        # ----------------------------------------------------
+        # En cours
+        # ----------------------------------------------------
 
-    raise InstagramError(
-        "Instagram traite encore la vidéo. "
-        "Réessaie dans quelques instants."
+        if status_code not in {
+            "IN_PROGRESS",
+            "UNKNOWN",
+        }:
+            print(
+                "Statut Instagram inhabituel :",
+                status_code,
+                status_detail,
+            )
+
+        await asyncio.sleep(
+            poll_interval
+        )
+
+        elapsed += poll_interval
+
+    # --------------------------------------------------------
+    # Timeout
+    # --------------------------------------------------------
+
+    final_data = await get_container_status(
+        creation_id=creation_id,
+        access_token=access_token,
     )
 
+    final_status = str(
+        final_data.get(
+            "status_code",
+            "UNKNOWN",
+        )
+    )
+
+    final_detail = str(
+        final_data.get(
+            "status",
+            "",
+        )
+    )
+
+    raise InstagramError(
+        "Instagram traite encore la vidéo après "
+        f"{timeout_seconds} secondes. "
+        f"Statut : {final_status}. "
+        f"Détail : {final_detail or 'aucun'}."
+    )
+
+
+# ============================================================
+# PUBLICATION DU CONTAINER
+# ============================================================
 
 async def publish_container(
     *,
@@ -598,21 +739,37 @@ async def publish_container(
     if response.status_code >= 400:
         raise InstagramError(
             "Publication refusée : "
-            f"{response.text[:900]}"
+            f"{response.text[:1200]}"
         )
 
-    media_id = response.json().get(
+    try:
+        data = response.json()
+
+    except ValueError:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse "
+            "de publication invalide."
+        )
+
+    media_id = data.get(
         "id"
     )
 
     if not media_id:
         raise InstagramError(
             "Instagram n'a pas renvoyé "
-            "l'id du média publié."
+            "l'id du média publié. "
+            f"Réponse : {str(data)[:700]}"
         )
 
-    return media_id
+    return str(
+        media_id
+    )
 
+
+# ============================================================
+# PROCESS COMPLET DE PUBLICATION
+# ============================================================
 
 async def publish_reel(
     *,
@@ -621,6 +778,10 @@ async def publish_reel(
     video_url: str,
     caption: str,
 ) -> dict[str, str]:
+    # --------------------------------------------------------
+    # 1. Création du container
+    # --------------------------------------------------------
+
     creation_id = await create_reel_container(
         user_id=user_id,
         access_token=access_token,
@@ -628,10 +789,18 @@ async def publish_reel(
         caption=caption,
     )
 
+    # --------------------------------------------------------
+    # 2. Attente du traitement de la vidéo
+    # --------------------------------------------------------
+
     await wait_until_ready(
         creation_id=creation_id,
         access_token=access_token,
     )
+
+    # --------------------------------------------------------
+    # 3. Publication
+    # --------------------------------------------------------
 
     media_id = await publish_container(
         user_id=user_id,
