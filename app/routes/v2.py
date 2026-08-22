@@ -13,6 +13,7 @@ from app.services.cloudinary_media import (
     muted_video_url,
     upload_video,
     upload_video_url,
+    verify_cloudinary_connection,
 )
 from app.services.database import (
     DatabaseUnavailable,
@@ -67,11 +68,22 @@ async def v2_status():
             )
         except Exception:
             mongo_ready = False
+    cloudinary_ready = False
+    cloudinary_error = ""
+    if cloudinary_configured():
+        try:
+            cloudinary_ready = await asyncio.to_thread(
+                verify_cloudinary_connection
+            )
+        except CloudinaryMediaError as exc:
+            cloudinary_error = str(exc)
     return {
         "ok": True,
         "mongodb_configured": database_configured(),
         "mongodb_ready": mongo_ready,
-        "cloudinary_ready": cloudinary_configured(),
+        "cloudinary_configured": cloudinary_configured(),
+        "cloudinary_ready": cloudinary_ready,
+        "cloudinary_error": cloudinary_error,
         "push_ready": push_configured(),
         "trial_reels_enabled": settings.enable_trial_reels,
     }

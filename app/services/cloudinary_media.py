@@ -1,4 +1,5 @@
 from pathlib import Path
+import re
 from typing import Any
 
 import cloudinary
@@ -14,7 +15,8 @@ class CloudinaryMediaError(RuntimeError):
 
 
 def safe_cloudinary_failure(exc: Exception, action: str = "envoi") -> str:
-    detail = str(exc).lower()
+    raw_detail = str(exc)
+    detail = raw_detail.lower()
     if "invalid signature" in detail:
         return "Cloudinary refuse la signature : CLOUDINARY_API_SECRET est incorrect."
     if "unknown api key" in detail or "invalid api key" in detail:
@@ -37,10 +39,38 @@ def safe_cloudinary_failure(exc: Exception, action: str = "envoi") -> str:
         )
     if isinstance(exc, cloudinary.exceptions.RateLimited):
         return "La limite de requêtes Cloudinary est atteinte. Réessaie plus tard."
-    return (
-        f"Cloudinary a refusé l’{action}. Vérifie les trois variables Cloudinary "
-        "dans Render et la limite vidéo de ton compte."
+    safe_detail = raw_detail
+    for value in (
+        settings.cloudinary_api_secret,
+        settings.cloudinary_api_key,
+        settings.cloudinary_cloud_name,
+    ):
+        if value:
+            safe_detail = safe_detail.replace(value, "[valeur masquée]")
+    safe_detail = re.sub(
+        r"(?i)(signature|api[_ -]?key)(\s*[:=]?\s*)[a-z0-9_-]+",
+        r"\1\2[valeur masquée]",
+        safe_detail,
     )
+    safe_detail = re.sub(
+        r"\b[a-fA-F0-9]{32,64}\b",
+        "[signature masquée]",
+        safe_detail,
+    )
+    safe_detail = " ".join(safe_detail.split())[:350]
+    error_type = type(exc).__name__
+    return f"Cloudinary a refusé l’{action} ({error_type}) : {safe_detail}"
+
+
+def verify_cloudinary_connection() -> bool:
+    configure_cloudinary()
+    try:
+        result = cloudinary.api.ping()
+    except Exception as exc:
+        raise CloudinaryMediaError(
+            safe_cloudinary_failure(exc, "authentification")
+        ) from exc
+    return str(result.get("status", "")).lower() == "ok"
 
 
 def cloudinary_configured() -> bool:

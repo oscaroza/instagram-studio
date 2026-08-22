@@ -160,13 +160,19 @@ async function loadPublishingLimit(){
 $('refreshLimitBtn').addEventListener('click',loadPublishingLimit);
 
 async function loadV2Status(){
-  const pill=$('mongoStatusPill'),text=$('mongoStatusText');
+  const pill=$('mongoStatusPill'),text=$('mongoStatusText'),cloudPill=$('cloudinaryStatusPill'),cloudText=$('cloudinaryStatusText');
   try{
     const data=await api('/api/v2/status');
     if(data.mongodb_ready){pill.textContent='MongoDB ✓';pill.className='pill ok';text.textContent='Connecté';text.className='cap-on';}
     else if(data.mongodb_configured){pill.textContent='MongoDB connexion impossible';pill.className='pill warn';text.textContent='Connexion Atlas impossible';text.className='cap-off';}
     else{pill.textContent='MongoDB à configurer';pill.className='pill warn';text.textContent='MONGODB_URI manquante';text.className='cap-off';}
-  }catch(err){pill.textContent='MongoDB indisponible';pill.className='pill warn';text.textContent=err.message;text.className='cap-off';}
+    if(data.cloudinary_ready){cloudPill.textContent='Cloudinary ✓';cloudPill.className='pill ok';cloudText.textContent='Connecté';cloudText.className='cap-on';}
+    else if(data.cloudinary_configured){cloudPill.textContent='Cloudinary connexion refusée';cloudPill.className='pill warn';cloudText.textContent=data.cloudinary_error||'Connexion impossible';cloudText.className='cap-off';}
+    else{cloudPill.textContent='Cloudinary à configurer';cloudPill.className='pill warn';cloudText.textContent='Variables Cloudinary manquantes';cloudText.className='cap-off';}
+  }catch(err){
+    pill.textContent='MongoDB indisponible';pill.className='pill warn';text.textContent=err.message;text.className='cap-off';
+    cloudPill.textContent='Cloudinary indisponible';cloudPill.className='pill warn';cloudText.textContent=err.message;cloudText.className='cap-off';
+  }
 }
 
 async function loadLibrary(){

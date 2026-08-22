@@ -115,3 +115,28 @@ def test_cloudinary_errors_identify_bad_credentials_without_echoing_values():
     assert "CLOUDINARY_API_SECRET" in signature_error
     assert "CLOUDINARY_API_KEY" in key_error
     assert secret not in signature_error
+
+
+def test_unknown_cloudinary_error_is_safely_redacted():
+    values = {
+        "cloudinary_cloud_name": "private-cloud",
+        "cloudinary_api_key": "private-api-key",
+        "cloudinary_api_secret": "private-api-secret",
+    }
+    originals = {key: getattr(settings, key) for key in values}
+    try:
+        for key, value in values.items():
+            object.__setattr__(settings, key, value)
+        result = safe_cloudinary_failure(
+            RuntimeError(
+                "Unexpected failure private-cloud private-api-key private-api-secret"
+            )
+        )
+    finally:
+        for key, value in originals.items():
+            object.__setattr__(settings, key, value)
+
+    assert "Unexpected failure" in result
+    assert "private-cloud" not in result
+    assert "private-api-key" not in result
+    assert "private-api-secret" not in result

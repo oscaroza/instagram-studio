@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=7">
+  <link rel="stylesheet" href="/static/styles.css?v=8">
 </head>
 <body>
   <header class="topbar">
@@ -23,7 +23,7 @@
       <span class="pill {{ 'ok' if cerebras_ready else 'warn' }}">Groq {{ '✓' if cerebras_ready else 'à configurer' }}</span>
       <span class="pill {{ 'ok' if instagram_ready else 'warn' }}">Instagram {{ '✓' if instagram_ready else 'à configurer' }}</span>
       <span id="mongoStatusPill" class="pill {{ 'ok' if mongodb_ready else 'warn' }}">MongoDB {{ 'vérification…' if mongodb_ready else 'à configurer' }}</span>
-      <span class="pill {{ 'ok' if cloudinary_ready else 'warn' }}">Cloudinary {{ '✓' if cloudinary_ready else 'à configurer' }}</span>
+      <span id="cloudinaryStatusPill" class="pill {{ 'ok' if cloudinary_ready else 'warn' }}">Cloudinary {{ 'vérification…' if cloudinary_ready else 'à configurer' }}</span>
     </div>
   </header>
 
@@ -187,7 +187,7 @@
           <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
           <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>
           <div><span>MongoDB</span><strong id="mongoStatusText">{{ 'Vérification de la connexion…' if mongodb_ready else 'MONGODB_URI manquante' }}</strong></div>
-          <div><span>Cloudinary</span><strong>{{ 'Configuré' if cloudinary_ready else 'Variables Cloudinary manquantes' }}</strong></div>
+          <div><span>Cloudinary</span><strong id="cloudinaryStatusText">{{ 'Vérification de la connexion…' if cloudinary_ready else 'Variables Cloudinary manquantes' }}</strong></div>
           <div><span>Publications API • 24 h</span><strong id="publishingLimit">Chargement…</strong></div>
         </div>
         <button id="refreshLimitBtn" class="ghost" type="button">Actualiser le compteur</button>
@@ -208,6 +208,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>
