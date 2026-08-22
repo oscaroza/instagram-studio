@@ -15,7 +15,7 @@ Studio personnel sécurisé pour préparer et publier des Reels Instagram. La V2
 
 - Interface responsive, utilisable sur iPhone.
 - Upload temporaire MP4/MOV/M4V sans charger tout le fichier en RAM.
-- Génération IA via l'API Cerebras (`gpt-oss-120b` par défaut).
+- Génération IA via Groq, en conservant les noms historiques `CEREBRAS_*`.
 - Caption, hashtags, hook et alt text modifiables.
 - Brouillons conservés localement dans le navigateur (pas de DB requise).
 - Publication d'un Reel via l'API Instagram officielle.
@@ -31,7 +31,7 @@ Browser (iPhone/PC)
   └─ HTTPS
        ↓
 FastAPI on Render Free
-  ├─ Cerebras API
+  ├─ Groq API
   ├─ Instagram API
   └─ stockage temporaire /app/uploads (éphémère)
 ```
@@ -62,19 +62,21 @@ INSTAGRAM_APP_SECRET=...
 INSTAGRAM_REDIRECT_URI=https://TON-SERVICE.onrender.com/auth/instagram/callback
 ```
 
-Ne jamais committer `.env`. Le code d'accès, les tokens et les clés ne doivent jamais être envoyés au navigateur ou écrits dans les logs.
+Ne jamais committer `.env`. Les clés et tokens ne sont jamais écrits dans les logs. Seul le token Instagram longue durée est révélé sur le callback OAuth protégé, à ta demande, pour pouvoir le copier dans Render.
 
 `STUDIO_ACCESS_CODE` est obligatoire : si la variable manque, l'application reste verrouillée. Sur Render, `APP_SECRET_KEY` est générée automatiquement et `STUDIO_COOKIE_SECURE=true`.
 
-## Cerebras
+## Groq (noms historiques Cerebras)
 
 Le modèle est configurable :
 
 ```env
-CEREBRAS_MODEL=gpt-oss-120b
+CEREBRAS_API_KEY=clé_Groq
+CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
+CEREBRAS_MODEL=openai/gpt-oss-20b
 ```
 
-Si Cerebras modifie son catalogue ou ses limites, il suffit de changer cette variable dans Render sans modifier le code.
+Les noms `CEREBRAS_*` sont conservés pour éviter une migration inutile, mais les valeurs doivent correspondre à Groq.
 
 ## Instagram / Meta
 
@@ -100,10 +102,10 @@ Puis ouvrir `http://localhost:8000`.
 
 ## Sécurité
 
-- Les tokens API sont lus uniquement côté serveur.
-- Aucun token n'est renvoyé au JS de l'interface.
+- Les tokens API sont utilisés côté serveur.
+- Le token Instagram longue durée est affiché uniquement sur le callback OAuth protégé afin de pouvoir le copier dans Render; il n'est jamais journalisé.
 - `.env` est ignoré par Git.
-- Le callback OAuth masque le token à l'écran.
+- Le callback OAuth échange automatiquement le token court contre un token longue durée.
 - Le flux OAuth utilise un `state` signé.
 
 ## État de la V2

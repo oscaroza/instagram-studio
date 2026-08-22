@@ -82,14 +82,17 @@ Consignes supplémentaires: {extra or 'aucune'}
             headers=headers,
         )
     if response.status_code >= 400:
-        detail = response.text[:500]
-        raise CerebrasError(f"Erreur Cerebras {response.status_code}: {detail}")
+        detail = response.text.replace(
+            settings.cerebras_api_key,
+            "[secret redacted]",
+        )[:500]
+        raise CerebrasError(f"Erreur Groq {response.status_code}: {detail}")
 
     data = response.json()
     try:
         content = data["choices"][0]["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
-        raise CerebrasError("Réponse Cerebras inattendue.") from exc
+        raise CerebrasError("Réponse Groq inattendue.") from exc
 
     result = _extract_json(content)
     hashtags = result.get("hashtags") or []

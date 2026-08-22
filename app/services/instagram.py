@@ -153,6 +153,48 @@ async def exchange_code_for_token(
         )
 
 
+async def exchange_for_long_lived_token(
+    short_lived_token: str,
+) -> dict[str, Any]:
+    """Exchange an unexpired OAuth token for Meta's long-lived token."""
+    if not short_lived_token or not settings.instagram_app_secret:
+        raise InstagramError(
+            "Token court ou secret Instagram manquant pour l’échange longue durée."
+        )
+
+    params = {
+        "grant_type": "ig_exchange_token",
+        "client_secret": settings.instagram_app_secret,
+        "access_token": short_lived_token,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            "https://graph.instagram.com/access_token",
+            params=params,
+        )
+
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Échange du token Instagram longue durée refusé : "
+            f"{_safe_meta_error(response.text, short_lived_token, settings.instagram_app_secret)}"
+        )
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse longue durée invalide."
+        )
+
+    if not payload.get("access_token"):
+        raise InstagramError(
+            "Instagram n’a pas renvoyé de token longue durée."
+        )
+
+    return payload
+
+
 # ============================================================
 # FACEBOOK LOGIN FOR BUSINESS
 # ANCIEN FLOW — CONSERVÉ TEMPORAIREMENT

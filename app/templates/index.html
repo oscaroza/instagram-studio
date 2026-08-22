@@ -14,7 +14,7 @@
       <h1>Instagram Studio</h1>
     </div>
     <div class="status-row">
-      <span class="pill {{ 'ok' if cerebras_ready else 'warn' }}">Cerebras {{ '✓' if cerebras_ready else 'à configurer' }}</span>
+      <span class="pill {{ 'ok' if cerebras_ready else 'warn' }}">Groq {{ '✓' if cerebras_ready else 'à configurer' }}</span>
       <span class="pill {{ 'ok' if instagram_ready else 'warn' }}">Instagram {{ '✓' if instagram_ready else 'à configurer' }}</span>
     </div>
   </header>
@@ -141,7 +141,7 @@
       <div class="card">
         <h2>État V1</h2>
         <div class="settings-list">
-          <div><span>Cerebras</span><strong>{{ 'Configuré' if cerebras_ready else 'CEREBRAS_API_KEY manquante' }}</strong></div>
+          <div><span>Groq</span><strong>{{ 'Configuré' if cerebras_ready else 'CEREBRAS_API_KEY manquante' }}</strong></div>
           <div><span>Modèle</span><strong>{{ model }}</strong></div>
           <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
           <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>

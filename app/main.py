@@ -39,6 +39,7 @@ from app.services.instagram import (
     build_authorize_url,
     build_facebook_business_login_url,
     exchange_code_for_token,
+    exchange_for_long_lived_token,
     get_content_publishing_limit,
     get_instagram_business_account,
     publish_reel,
@@ -99,7 +100,6 @@ serializer = URLSafeSerializer(
 PUBLIC_PATHS = {
     "/health",
     "/login",
-    "/auth/instagram/callback",
     "/auth/facebook/callback",
 }
 
@@ -677,10 +677,18 @@ async def instagram_callback(
         )
 
     try:
-        token_data = (
+        short_token_data = (
             await exchange_code_for_token(
                 code
             )
+        )
+
+        short_token = str(
+            short_token_data.get("access_token", "")
+        )
+
+        long_token_data = await exchange_for_long_lived_token(
+            short_token
         )
 
     except InstagramError as exc:
@@ -689,14 +697,18 @@ async def instagram_callback(
             status_code=502,
         )
 
-    token = token_data.get(
+    token = long_token_data.get(
         "access_token",
         "",
     )
 
-    user_id = token_data.get(
+    user_id = short_token_data.get(
         "user_id",
         "",
+    )
+
+    expires_in = int(
+        long_token_data.get("expires_in", 0) or 0
     )
 
     return templates.TemplateResponse(
@@ -704,6 +716,8 @@ async def instagram_callback(
         name="oauth_success.html",
         context={
             "user_id": user_id,
+            "access_token": token,
+            "expires_days": round(expires_in / 86400) if expires_in else 60,
         },
     )
 

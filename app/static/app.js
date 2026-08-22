@@ -35,7 +35,7 @@ $('generateBtn').addEventListener('click', async () => {
     const x=d.result; $('caption').value=x.caption||''; $('hashtags').value=(x.hashtags||[]).join(' '); $('altText').value=x.alt_text||''; $('hook').value=x.hook||'';
     $('aiBadge').textContent=`Généré • ${d.model}`; $('aiBadge').className='pill ok';
   } catch(err){ setNotice('actionMessage',err.message,'error'); }
-  finally { btn.disabled=false; btn.textContent='✨ Générer avec Cerebras'; }
+  finally { btn.disabled=false; btn.textContent='✨ Générer avec Groq'; }
 });
 
 function currentDraft(){ const d={}; fields.forEach(f=>d[f]=$(f).value); d.savedAt=new Date().toISOString(); d.id=crypto.randomUUID(); return d; }

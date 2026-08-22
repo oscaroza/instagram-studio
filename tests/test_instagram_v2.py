@@ -2,6 +2,7 @@ import asyncio
 import json
 
 from app.services import instagram
+from app.config import settings
 
 
 class FakeResponse:
@@ -63,6 +64,35 @@ def test_content_publishing_limit_uses_meta_values(monkeypatch):
         "duration_seconds": 86400,
     }
     assert FakeAsyncClient.last_request["params"]["fields"] == "quota_usage,config"
+
+
+def test_short_token_is_exchanged_for_long_lived_token(monkeypatch):
+    FakeAsyncClient.response = FakeResponse(
+        {
+            "access_token": "long-lived-test-token",
+            "token_type": "bearer",
+            "expires_in": 5184000,
+        }
+    )
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    previous_secret = settings.instagram_app_secret
+    object.__setattr__(settings, "instagram_app_secret", "test-app-secret")
+    try:
+        result = asyncio.run(
+            instagram.exchange_for_long_lived_token("short-lived-test-token")
+        )
+    finally:
+        object.__setattr__(settings, "instagram_app_secret", previous_secret)
+
+    assert result["access_token"] == "long-lived-test-token"
+    assert result["expires_in"] == 5184000
+    assert FakeAsyncClient.last_request["url"] == (
+        "https://graph.instagram.com/access_token"
+    )
+    assert FakeAsyncClient.last_request["params"]["grant_type"] == (
+        "ig_exchange_token"
+    )
 
 
 def test_normal_reel_payload_is_unchanged(monkeypatch):

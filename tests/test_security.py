@@ -26,6 +26,17 @@ def test_protected_page_redirects_to_login():
             assert response.headers["location"].startswith("/login")
 
 
+def test_instagram_callback_requires_studio_session():
+    with temporary_settings(studio_access_code="test-only-code"):
+        with TestClient(app) as client:
+            response = client.get(
+                "/auth/instagram/callback?code=oauth-code&state=signed-state",
+                follow_redirects=False,
+            )
+            assert response.status_code == 303
+            assert response.headers["location"].startswith("/login")
+
+
 def test_login_sets_http_only_session_and_unlocks_studio():
     with temporary_settings(
         studio_access_code="test-only-code",

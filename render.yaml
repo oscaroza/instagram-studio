@@ -18,9 +18,9 @@ services:
       - key: STUDIO_COOKIE_SECURE
         value: true
       - key: CEREBRAS_MODEL
-        value: gpt-oss-120b
+        value: openai/gpt-oss-20b
       - key: CEREBRAS_BASE_URL
-        value: https://api.cerebras.ai/v1
+        value: https://api.groq.com/openai/v1
       - key: INSTAGRAM_API_BASE
         value: https://graph.instagram.com
       - key: INSTAGRAM_API_VERSION
