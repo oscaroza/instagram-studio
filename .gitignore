@@ -1,6 +1,9 @@
 __pycache__/
 *.py[cod]
 .env
+.vapid.env
+private_key.pem
+public_key.pem
 .venv/
 venv/
 .pytest_cache/

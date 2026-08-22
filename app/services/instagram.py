@@ -195,6 +195,43 @@ async def exchange_for_long_lived_token(
     return payload
 
 
+async def refresh_long_lived_token(
+    access_token: str,
+) -> dict[str, Any]:
+    if not access_token:
+        raise InstagramError("Token Instagram longue durée manquant.")
+
+    params = {
+        "grant_type": "ig_refresh_token",
+        "access_token": access_token,
+    }
+
+    async with httpx.AsyncClient(timeout=30) as client:
+        response = await client.get(
+            "https://graph.instagram.com/refresh_access_token",
+            params=params,
+        )
+
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Renouvellement automatique du token Instagram refusé : "
+            f"{_safe_meta_error(response.text, access_token)}"
+        )
+
+    try:
+        payload = response.json()
+    except ValueError:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse de renouvellement invalide."
+        )
+
+    if not payload.get("access_token"):
+        raise InstagramError(
+            "Instagram n’a pas renvoyé le token renouvelé."
+        )
+    return payload
+
+
 # ============================================================
 # FACEBOOK LOGIN FOR BUSINESS
 # ANCIEN FLOW — CONSERVÉ TEMPORAIREMENT
@@ -289,7 +326,7 @@ async def get_instagram_business_account(
     if response.status_code >= 400:
         raise InstagramError(
             "Impossible de récupérer les Pages Facebook : "
-            f"{response.text[:1200]}"
+            f"{_safe_meta_error(response.text, access_token)}"
         )
 
     try:
@@ -423,7 +460,10 @@ async def get_instagram_business_account(
                         "page_id": page_id,
                         "page_name": page_name,
                         "detail_error": (
-                            detail_response.text[:300]
+                            _safe_meta_error(
+                                detail_response.text,
+                                access_token,
+                            )[:300]
                         ),
                     }
                 )
@@ -625,7 +665,7 @@ async def create_reel_container(
     if response.status_code >= 400:
         raise InstagramError(
             "Création du Reel refusée : "
-            f"{response.text[:1200]}"
+            f"{_safe_meta_error(response.text, access_token)}"
         )
 
     try:
@@ -679,7 +719,7 @@ async def get_container_status(
     if response.status_code >= 400:
         raise InstagramError(
             "Statut du média indisponible : "
-            f"{response.text[:1200]}"
+            f"{_safe_meta_error(response.text, access_token)}"
         )
 
     try:
@@ -846,7 +886,7 @@ async def publish_container(
     if response.status_code >= 400:
         raise InstagramError(
             "Publication refusée : "
-            f"{response.text[:1200]}"
+            f"{_safe_meta_error(response.text, access_token)}"
         )
 
     try:

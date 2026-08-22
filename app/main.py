@@ -1,3 +1,4 @@
+import asyncio
 import os
 import secrets
 import uuid
@@ -44,6 +45,25 @@ from app.services.instagram import (
     get_instagram_business_account,
     publish_reel,
 )
+from app.routes.v2 import router as v2_router
+from app.services.cloudinary_media import (
+    CloudinaryMediaError,
+    cloudinary_configured,
+    delete_video as delete_cloudinary_video,
+    upload_video as upload_video_to_cloudinary,
+)
+from app.services.database import (
+    database,
+    database_configured,
+    serialize_document,
+    utc_now,
+)
+from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.token_store import (
+    resolve_instagram_credentials,
+    save_credentials,
+    stored_credentials_exist,
+)
 from app.security import (
     SESSION_COOKIE,
     access_code_matches,
@@ -85,10 +105,27 @@ app.mount(
     name="static",
 )
 
+app.include_router(v2_router)
+
 
 templates = Jinja2Templates(
     directory=BASE_DIR / "templates"
 )
+
+
+@app.on_event("startup")
+async def startup_services():
+    if database_configured():
+        try:
+            start_scheduler()
+        except Exception:
+            # MongoDB ne doit jamais empêcher la V1 de démarrer.
+            pass
+
+
+@app.on_event("shutdown")
+async def shutdown_services():
+    stop_scheduler()
 
 
 serializer = URLSafeSerializer(
@@ -100,6 +137,7 @@ serializer = URLSafeSerializer(
 PUBLIC_PATHS = {
     "/health",
     "/login",
+    "/sw.js",
     "/auth/facebook/callback",
 }
 
@@ -233,6 +271,7 @@ async def logout():
 async def home(
     request: Request
 ):
+    instagram_stored = await stored_credentials_exist()
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -242,8 +281,11 @@ async def home(
             ),
 
             "instagram_ready": bool(
-                settings.instagram_access_token
-                and settings.instagram_user_id
+                instagram_stored
+                or (
+                    settings.instagram_access_token
+                    and settings.instagram_user_id
+                )
             ),
 
             "oauth_ready": bool(
@@ -263,6 +305,8 @@ async def home(
             "publishing_capabilities": publishing_capabilities(),
             "v2_modules": V2_MODULES,
             "trial_reels_enabled": settings.enable_trial_reels,
+            "mongodb_ready": database_configured(),
+            "cloudinary_ready": cloudinary_configured(),
         },
     )
 
@@ -277,6 +321,10 @@ async def health():
         "ok": True,
 
         "access_control_configured": access_control_configured(),
+
+        "mongodb_configured": database_configured(),
+
+        "cloudinary_configured": cloudinary_configured(),
 
         "cerebras_configured": bool(
             settings.cerebras_api_key
@@ -457,6 +505,58 @@ async def upload_media(
         f"/media/{target_name}"
     )
 
+    if database_configured() and cloudinary_configured():
+        cloud_media = None
+        try:
+            cloud_media = await asyncio.to_thread(
+                upload_video_to_cloudinary,
+                target,
+                file.filename,
+            )
+            document = {
+                "cloudinary_public_id": cloud_media["public_id"],
+                "secure_url": cloud_media["secure_url"],
+                "thumbnail_url": cloud_media["thumbnail_url"],
+                "bytes": cloud_media["bytes"],
+                "duration": cloud_media["duration"],
+                "format": cloud_media["format"],
+                "width": cloud_media["width"],
+                "height": cloud_media["height"],
+                "original_filename": cloud_media["original_filename"],
+                "created_at": utc_now(),
+            }
+            insert_result = await asyncio.to_thread(
+                database().media.insert_one,
+                document,
+            )
+            target.unlink(missing_ok=True)
+            document["_id"] = insert_result.inserted_id
+            return {
+                "ok": True,
+                "url": cloud_media["secure_url"],
+                "filename": file.filename,
+                "size": cloud_media["bytes"],
+                "storage": "cloudinary",
+                "media": serialize_document(document),
+            }
+        except CloudinaryMediaError as exc:
+            target.unlink(missing_ok=True)
+            return json_error(str(exc), 502)
+        except Exception:
+            if cloud_media and cloud_media.get("public_id"):
+                try:
+                    await asyncio.to_thread(
+                        delete_cloudinary_video,
+                        cloud_media["public_id"],
+                    )
+                except Exception:
+                    pass
+            target.unlink(missing_ok=True)
+            return json_error(
+                "La vidéo a été envoyée, mais son enregistrement MongoDB a échoué.",
+                503,
+            )
+
     return {
         "ok": True,
         "url": public_url,
@@ -498,13 +598,23 @@ async def serve_media(
     )
 
 
+@app.get("/sw.js")
+async def service_worker():
+    return FileResponse(
+        BASE_DIR / "static" / "sw.js",
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
+
+
 # ============================================================
 # PUBLICATION INSTAGRAM
 # ============================================================
 
 @app.get("/api/instagram/publishing-limit")
 async def instagram_publishing_limit():
-    if not settings.instagram_access_token or not settings.instagram_user_id:
+    user_id, access_token = await resolve_instagram_credentials()
+    if not access_token or not user_id:
         return json_error(
             "Instagram n’est pas configuré pour lire le compteur.",
             503,
@@ -512,8 +622,8 @@ async def instagram_publishing_limit():
 
     try:
         result = await get_content_publishing_limit(
-            user_id=settings.instagram_user_id,
-            access_token=settings.instagram_access_token,
+            user_id=user_id,
+            access_token=access_token,
         )
         return {"ok": True, **result}
     except InstagramError as exc:
@@ -562,19 +672,7 @@ async def instagram_publish(
             "Une URL vidéo publique est nécessaire."
         )
 
-    access_token = str(
-        payload.get(
-            "access_token"
-        )
-        or settings.instagram_access_token
-    ).strip()
-
-    user_id = str(
-        payload.get(
-            "user_id"
-        )
-        or settings.instagram_user_id
-    ).strip()
+    user_id, access_token = await resolve_instagram_credentials()
 
     if (
         not access_token
@@ -594,6 +692,31 @@ async def instagram_publish(
             caption=caption,
             trial=publication_mode == "trial",
         )
+
+        if database_configured():
+            document = {
+                "title": str(payload.get("title", "Publication Instagram"))[:120],
+                "library_id": str(payload.get("library_id", "")) or None,
+                "video_url": video_url,
+                "thumbnail_url": str(payload.get("thumbnail_url", "")),
+                "caption": caption,
+                "hook": str(payload.get("hook", "")),
+                "alt_text": str(payload.get("alt_text", "")),
+                "publication_mode": publication_mode,
+                "workflow": "auto_publish",
+                "status": "published",
+                "creation_id": result.get("creation_id"),
+                "instagram_media_id": result.get("media_id"),
+                "published_at": utc_now(),
+                "created_at": utc_now(),
+                "updated_at": utc_now(),
+            }
+            try:
+                await asyncio.to_thread(database().publications.insert_one, document)
+            except Exception:
+                # Instagram a déjà publié : MongoDB ne doit pas changer ce succès
+                # en erreur visible dans le flow V1.
+                pass
 
         return {
             "ok": True,
@@ -711,6 +834,12 @@ async def instagram_callback(
         long_token_data.get("expires_in", 0) or 0
     )
 
+    stored_securely = await save_credentials(
+        user_id=str(user_id),
+        access_token=str(token),
+        expires_in=expires_in or 5184000,
+    )
+
     return templates.TemplateResponse(
         request=request,
         name="oauth_success.html",
@@ -718,6 +847,7 @@ async def instagram_callback(
             "user_id": user_id,
             "access_token": token,
             "expires_days": round(expires_in / 86400) if expires_in else 60,
+            "stored_securely": stored_securely,
         },
     )
 

@@ -128,8 +128,41 @@ class Settings:
 
     enable_trial_reels: bool = os.getenv(
         "ENABLE_TRIAL_REELS",
-        "false",
+        "true",
     ).lower() in {"1", "true", "yes", "on"}
+
+    # ------------------------------------------------------------
+    # V2 persistence and media storage
+    # ------------------------------------------------------------
+
+    mongodb_uri: str = os.getenv("MONGODB_URI", "")
+    mongodb_database: str = os.getenv(
+        "MONGODB_DATABASE",
+        "instagram_studio",
+    )
+
+    cloudinary_cloud_name: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    cloudinary_api_key: str = os.getenv("CLOUDINARY_API_KEY", "")
+    cloudinary_api_secret: str = os.getenv("CLOUDINARY_API_SECRET", "")
+    cloudinary_folder: str = os.getenv(
+        "CLOUDINARY_FOLDER",
+        "instagram-studio",
+    ).strip("/")
+
+    # ------------------------------------------------------------
+    # PWA Web Push
+    # ------------------------------------------------------------
+
+    vapid_public_key: str = os.getenv("VAPID_PUBLIC_KEY", "")
+    vapid_private_key: str = os.getenv("VAPID_PRIVATE_KEY", "")
+    vapid_subject: str = os.getenv(
+        "VAPID_SUBJECT",
+        "mailto:admin@example.com",
+    )
+
+    scheduler_interval_seconds: int = int(
+        os.getenv("SCHEDULER_INTERVAL_SECONDS", "30")
+    )
 
     # ------------------------------------------------------------
     # Upload

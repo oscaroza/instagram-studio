@@ -66,3 +66,16 @@ def test_wrong_code_does_not_create_session():
             )
             assert response.status_code == 401
             assert "instagram_studio_session" not in response.cookies
+
+
+def test_pwa_assets_are_public_and_service_worker_controls_root():
+    with temporary_settings(studio_access_code="test-only-code"):
+        with TestClient(app) as client:
+            manifest = client.get("/static/manifest.webmanifest")
+            worker = client.get("/sw.js")
+            icon = client.get("/static/icons/apple-touch-icon.png")
+
+            assert manifest.status_code == 200
+            assert worker.status_code == 200
+            assert worker.headers["service-worker-allowed"] == "/"
+            assert icon.status_code == 200

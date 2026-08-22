@@ -4,8 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0c10">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="IG Studio">
   <title>Instagram Studio</title>
-  <link rel="stylesheet" href="/static/styles.css?v=2">
+  <link rel="manifest" href="/static/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+  <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
+  <link rel="stylesheet" href="/static/styles.css?v=4">
 </head>
 <body>
   <header class="topbar">
@@ -16,6 +22,8 @@
     <div class="status-row">
       <span class="pill {{ 'ok' if cerebras_ready else 'warn' }}">Groq {{ '✓' if cerebras_ready else 'à configurer' }}</span>
       <span class="pill {{ 'ok' if instagram_ready else 'warn' }}">Instagram {{ '✓' if instagram_ready else 'à configurer' }}</span>
+      <span class="pill {{ 'ok' if mongodb_ready else 'warn' }}">MongoDB {{ '✓' if mongodb_ready else 'à configurer' }}</span>
+      <span class="pill {{ 'ok' if cloudinary_ready else 'warn' }}">Cloudinary {{ '✓' if cloudinary_ready else 'à configurer' }}</span>
     </div>
   </header>
 
@@ -33,7 +41,7 @@
       <div class="grid two">
         <div class="card">
           <h2>1. Média</h2>
-          <p class="muted">Import temporaire depuis ton téléphone, ou colle une URL publique.</p>
+          <p class="muted">Import durable dans Cloudinary, ou colle une URL publique.</p>
           <label class="upload-zone">
             <input id="videoFile" type="file" accept="video/mp4,video/quicktime,video/x-m4v">
             <strong>Choisir une vidéo</strong>
@@ -43,6 +51,8 @@
           <label>URL vidéo publique
             <input id="videoUrl" type="url" placeholder="https://…">
           </label>
+          <input id="libraryId" type="hidden">
+          <input id="thumbnailUrl" type="hidden">
           <div id="uploadProgress" class="notice hidden"></div>
         </div>
 
@@ -89,6 +99,17 @@
             <option value="trial" {{ '' if trial_reels_enabled else 'disabled' }}>Trial Reel{{ '' if trial_reels_enabled else ' — activation contrôlée requise' }}</option>
           </select>
         </label>
+        <div class="option-grid">
+          <label class="toggle-row"><input id="scheduleEnabled" type="checkbox"><span>Publier plus tard</span></label>
+          <label class="toggle-row"><input id="musicEnabled" type="checkbox"><span>Ajouter une musique dans Instagram</span></label>
+        </div>
+        <div id="scheduleFields" class="schedule-fields hidden">
+          <label>Date et heure
+            <input id="scheduledFor" type="datetime-local">
+          </label>
+          <p class="muted small">Heure locale de ton iPhone. Le Studio la stocke en UTC et l’affiche en heure de Paris.</p>
+        </div>
+        <div id="musicHelp" class="notice hidden">Le Studio conservera le brouillon, copiera le texte et t’enverra vers Instagram pour ajouter la musique manuellement.</div>
         <div class="grid two compact">
           <label>Alt text
             <textarea id="altText" rows="3"></textarea>
@@ -106,26 +127,45 @@
     </section>
 
     <section id="calendar" class="panel">
-      <div class="card placeholder-card">
-        <span class="pill warn">V2 • préparé</span>
-        <h2>Calendrier et publications programmées</h2>
-        <p class="muted">Le module est isolé du flow V1. La programmation sera activée après ajout d’une base durable et d’un worker fiable; aucune fausse programmation n’est simulée dans le navigateur.</p>
+      <div class="card">
+        <div class="calendar-toolbar">
+          <button id="calendarPrev" class="ghost" type="button">←</button>
+          <h2 id="calendarTitle">Calendrier</h2>
+          <button id="calendarNext" class="ghost" type="button">→</button>
+        </div>
+        <div class="calendar-weekdays"><span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span><span>Ven</span><span>Sam</span><span>Dim</span></div>
+        <div id="calendarGrid" class="calendar-grid"></div>
+        <div id="calendarNotice" class="notice hidden"></div>
+      </div>
+      <div class="card result-card">
+        <h2>Publications du mois</h2>
+        <div id="calendarList" class="publication-list"></div>
       </div>
     </section>
 
     <section id="library" class="panel">
-      <div class="card placeholder-card">
-        <span class="pill warn">V2 • préparé</span>
-        <h2>Bibliothèque média</h2>
-        <p class="muted">Le stockage Render actuel est éphémère. Cette section attend un stockage objet durable avant d’accepter des médias de production.</p>
+      <div class="card">
+        <div class="row-between"><div><h2>Bibliothèque Cloudinary</h2><p class="muted">Les métadonnées sont conservées dans MongoDB.</p></div><button id="refreshLibrary" class="ghost" type="button">Actualiser</button></div>
+        <p id="libraryUsage" class="muted small">Chargement…</p>
+        <div id="libraryNotice" class="notice hidden"></div>
+        <div id="libraryGrid" class="library-grid"></div>
       </div>
     </section>
 
     <section id="notifications" class="panel">
-      <div class="card placeholder-card">
-        <span class="pill warn">V2 • préparé</span>
-        <h2>Notifications</h2>
-        <p class="muted">Les événements de publication et d’échec sont prévus, mais aucun canal n’est activé sans configuration explicite.</p>
+      <div class="card">
+        <h2>Notifications iPhone</h2>
+        <p class="muted">Ajoute d’abord Instagram Studio à l’écran d’accueil, ouvre l’app depuis son icône, puis active les notifications.</p>
+        <button id="enablePushBtn" class="primary" type="button">Activer les notifications</button>
+        <button id="disablePushBtn" class="ghost hidden" type="button">Désactiver sur cet appareil</button>
+        <div id="pushNotice" class="notice hidden"></div>
+        <div class="notification-options">
+          <label class="toggle-row"><input id="notifyBefore" type="checkbox" checked><span>30 minutes avant une publication</span></label>
+          <label class="toggle-row"><input id="notifyPublished" type="checkbox" checked><span>Après une publication réussie</span></label>
+          <label class="toggle-row"><input id="notifyFailed" type="checkbox" checked><span>En cas d’échec</span></label>
+          <label class="toggle-row"><input id="notifyMusic" type="checkbox" checked><span>Quand un Reel avec musique est prêt</span></label>
+        </div>
+        <button id="savePushPrefs" class="secondary" type="button">Enregistrer les préférences</button>
       </div>
     </section>
 
@@ -139,12 +179,14 @@
 
     <section id="settings" class="panel">
       <div class="card">
-        <h2>État V1</h2>
+        <h2>État du Studio</h2>
         <div class="settings-list">
           <div><span>Groq</span><strong>{{ 'Configuré' if cerebras_ready else 'CEREBRAS_API_KEY manquante' }}</strong></div>
           <div><span>Modèle</span><strong>{{ model }}</strong></div>
           <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
           <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>
+          <div><span>MongoDB</span><strong>{{ 'Configuré' if mongodb_ready else 'MONGODB_URI manquante' }}</strong></div>
+          <div><span>Cloudinary</span><strong>{{ 'Configuré' if cloudinary_ready else 'Variables Cloudinary manquantes' }}</strong></div>
           <div><span>Publications API • 24 h</span><strong id="publishingLimit">Chargement…</strong></div>
         </div>
         <button id="refreshLimitBtn" class="ghost" type="button">Actualiser le compteur</button>
@@ -165,6 +207,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=2"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

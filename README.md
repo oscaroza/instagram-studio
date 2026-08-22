@@ -1,94 +1,101 @@
 # Instagram Studio V2
 
-Studio personnel sécurisé pour préparer et publier des Reels Instagram. La V2 conserve le flow Reel V1 et ajoute progressivement le gestionnaire.
+Studio personnel FastAPI pour préparer, programmer et publier des Reels Instagram. La V2 conserve le flow de publication immédiate de la V1 et l’OAuth Instagram direct.
 
-## Changements V2 sûrs
+## Fonctionnalités
 
-- Écran d'accès protégé par `STUDIO_ACCESS_CODE` côté serveur.
-- Session signée dans un cookie `HttpOnly`, `SameSite=Lax`, `Secure` sur Render.
-- Compteur Meta réel des publications API sur les dernières 24 h.
-- Socle séparé pour calendrier, programmation, bibliothèque et notifications.
-- Capabilities explicites pour Reel, Trial Reel, photo et carrousel.
-- Trial Reel derrière `ENABLE_TRIAL_REELS=false` par défaut, sans impact sur le Reel normal.
+- accès par code côté serveur avec cookie de session sécurisé ;
+- génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
+- publication immédiate d’un Reel normal ou Trial Reel ;
+- calendrier mensuel et publications programmées côté serveur ;
+- bibliothèque vidéo Cloudinary, indexée dans MongoDB, avec suppression manuelle ;
+- notifications Web Push PWA : 30 minutes avant, succès, échec et workflow musique ;
+- icône Apple/PWA et interface iPhone ;
+- compteur Meta des publications API sur les dernières 24 heures ;
+- token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement.
 
-## Ce que fait la V1
-
-- Interface responsive, utilisable sur iPhone.
-- Upload temporaire MP4/MOV/M4V sans charger tout le fichier en RAM.
-- Génération IA via Groq, en conservant les noms historiques `CEREBRAS_*`.
-- Caption, hashtags, hook et alt text modifiables.
-- Brouillons conservés localement dans le navigateur (pas de DB requise).
-- Publication d'un Reel via l'API Instagram officielle.
-- Début de flux OAuth Instagram avec Instagram Login.
-- Aucun secret dans le frontend ou le repo.
-- `render.yaml` prêt pour Render Free.
+Les photos et carrousels restent désactivés jusqu’à leur prochaine implémentation. Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram.
 
 ## Architecture
 
 ```text
-Browser (iPhone/PC)
-  ├─ localStorage: brouillons
-  └─ HTTPS
-       ↓
-FastAPI on Render Free
-  ├─ Groq API
-  ├─ Instagram API
-  └─ stockage temporaire /app/uploads (éphémère)
+iPhone / navigateur
+  └─ Instagram Studio PWA sur Render
+       ├─ Groq : génération des textes
+       ├─ Instagram API : publication et quota
+       ├─ Cloudinary : fichiers vidéo durables
+       └─ MongoDB Atlas : calendrier, métadonnées, push, token chiffré
 ```
 
-Le stockage vidéo temporaire sert uniquement à la V1/test. Sur Render Free, le disque est éphémère. Pour une V2 fiable, utiliser un stockage objet (R2/S3/Cloudinary) puis donner l'URL publique à Instagram.
+MongoDB ne stocke pas les vidéos. La limite de 512 Mo du cluster Atlas Free sert donc aux petits documents et non aux médias.
 
-## Déploiement Render
+## Variables Render
 
-1. Créer un repo GitHub avec ces fichiers.
-2. Dans Render : **New > Blueprint** (ou Web Service) puis connecter le repo.
-3. Ajouter les variables secrètes dans Render :
+Voir `.env.example` et `render.yaml`. Les secrets ne doivent jamais être commités.
 
 ```env
 APP_BASE_URL=https://TON-SERVICE.onrender.com
-APP_SECRET_KEY=...
 STUDIO_ACCESS_CODE=...
-CEREBRAS_API_KEY=...
-INSTAGRAM_ACCESS_TOKEN=...
-INSTAGRAM_USER_ID=...
-ENABLE_TRIAL_REELS=false
+CEREBRAS_API_KEY=TA_CLE_GROQ
+CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
+CEREBRAS_MODEL=openai/gpt-oss-20b
+
+MONGODB_URI=mongodb+srv://UTILISATEUR:MOT_DE_PASSE_ENCODE@instagram-studio.kecpds1.mongodb.net/?retryWrites=true&w=majority&appName=instagram-studio
+MONGODB_DATABASE=instagram_studio
+
+CLOUDINARY_CLOUD_NAME=...
+CLOUDINARY_API_KEY=...
+CLOUDINARY_API_SECRET=...
+CLOUDINARY_FOLDER=instagram-studio
+
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:ton-adresse@example.com
 ```
 
-Pour OAuth Instagram complet :
+Le mot de passe MongoDB doit être encodé pour une URL s’il contient des caractères spéciaux. Comme un ancien mot de passe a été partagé dans une conversation, il doit être révoqué et remplacé dans Atlas avant le déploiement.
+
+Pour générer les deux clés VAPID sans les afficher dans le terminal :
+
+```bash
+.venv/bin/python scripts/generate_vapid_env.py
+```
+
+Les valeurs sont écrites dans `.vapid.env`, fichier local ignoré par Git. Copie-les ensuite dans Render, puis supprime ce fichier si tu le souhaites.
+
+## Connexion Instagram et token longue durée
+
+Configurer dans Render :
 
 ```env
 INSTAGRAM_APP_ID=...
 INSTAGRAM_APP_SECRET=...
 INSTAGRAM_REDIRECT_URI=https://TON-SERVICE.onrender.com/auth/instagram/callback
+INSTAGRAM_API_BASE=https://graph.instagram.com
+INSTAGRAM_API_VERSION=v26.0
+ENABLE_TRIAL_REELS=true
 ```
 
-Ne jamais committer `.env`. Les clés et tokens ne sont jamais écrits dans les logs. Seul le token Instagram longue durée est révélé sur le callback OAuth protégé, à ta demande, pour pouvoir le copier dans Render.
+Le bouton **Connecter Instagram** échange automatiquement le token court contre un token longue durée. Le token est montré une fois sur l’écran de succès, comme dans la V1, puis chiffré dans MongoDB avec `APP_SECRET_KEY`. Après 30 jours, le Studio tente de le renouveler automatiquement avant utilisation. Il ne doit jamais être journalisé.
 
-`STUDIO_ACCESS_CODE` est obligatoire : si la variable manque, l'application reste verrouillée. Sur Render, `APP_SECRET_KEY` est générée automatiquement et `STUDIO_COOKIE_SECURE=true`.
+`INSTAGRAM_ACCESS_TOKEN` et `INSTAGRAM_USER_ID` restent acceptés comme solution de secours afin de ne pas casser la V1.
 
-## Groq (noms historiques Cerebras)
+## Notifications sur iPhone
 
-Le modèle est configurable :
+1. Ouvrir le Studio dans Safari.
+2. Partager → **Sur l’écran d’accueil**.
+3. Ouvrir le Studio depuis sa nouvelle icône.
+4. Aller dans **Notifications** et appuyer sur **Activer les notifications**.
 
-```env
-CEREBRAS_API_KEY=clé_Groq
-CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
-CEREBRAS_MODEL=openai/gpt-oss-20b
-```
+Web Push nécessite iOS/iPadOS 16.4 ou plus récent et l’application ajoutée à l’écran d’accueil.
 
-Les noms `CEREBRAS_*` sont conservés pour éviter une migration inutile, mais les valeurs doivent correspondre à Groq.
+## Programmation
 
-## Instagram / Meta
+Le planificateur tourne dans le même service Render et vérifie les publications toutes les 30 secondes. UptimeRobot peut appeler `/health` régulièrement pour éviter la veille du service. Les tâches sont réclamées de façon atomique dans MongoDB afin d’éviter une double publication, et une tâche interrompue est remise en file après 15 minutes.
 
-Cette V1 vise **Instagram API with Instagram Login** pour les comptes professionnels (Business/Creator). La publication d'un Reel suit le flux :
+Une programmation avec musique ne publie pas via l’API : à l’heure prévue, elle passe à **À finaliser dans Instagram** et envoie une notification.
 
-1. création du conteneur `/media`,
-2. attente de traitement,
-3. publication `/media_publish`.
-
-Pour tester rapidement un compte personnel/Creator dont tu contrôles l'app Meta, tu peux renseigner directement `INSTAGRAM_ACCESS_TOKEN` et `INSTAGRAM_USER_ID` dans Render.
-
-## Développement local
+## Développement et tests
 
 ```bash
 python -m venv .venv
@@ -98,27 +105,9 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Puis ouvrir `http://localhost:8000`.
+```bash
+python -m pytest -q
+node --check app/static/app.js
+```
 
-## Sécurité
-
-- Les tokens API sont utilisés côté serveur.
-- Le token Instagram longue durée est affiché uniquement sur le callback OAuth protégé afin de pouvoir le copier dans Render; il n'est jamais journalisé.
-- `.env` est ignoré par Git.
-- Le callback OAuth échange automatiquement le token court contre un token longue durée.
-- Le flux OAuth utilise un `state` signé.
-
-## État de la V2
-
-- Le stockage temporaire Render peut disparaître à un redémarrage/spin-down.
-- Calendrier et programmation préparés mais volontairement inactifs tant qu'une base durable et un worker fiable ne sont pas installés.
-- Bibliothèque préparée mais inactive tant qu'un stockage objet durable n'est pas configuré.
-- Brouillons V1 toujours stockés localement dans le navigateur.
-- Notifications préparées, sans canal activé par défaut.
-- Photo et carrousel documentés comme supportés par Meta, publication à implémenter dans une étape séparée.
-- Trial Reels documentés officiellement par Meta via `trial_params`; l'activation reste opt-in pour protéger le flow Reel existant.
-- Pas encore de récupération des Insights.
-- Pas encore d'analyse automatique du contenu vidéo par vision.
-- OAuth Meta demandera de terminer la configuration de l'app dans Meta for Developers.
-
-Ces éléments sont prévus pour V2/V3.
+Le serveur continue de démarrer en mode V1 si MongoDB est temporairement indisponible. Une panne MongoDB après une publication Instagram réussie ne transforme pas ce succès en erreur côté utilisateur.

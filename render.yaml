@@ -24,8 +24,28 @@ services:
       - key: INSTAGRAM_API_BASE
         value: https://graph.instagram.com
       - key: INSTAGRAM_API_VERSION
-        value: v23.0
+        value: v26.0
       - key: MAX_UPLOAD_MB
         value: 250
       - key: ENABLE_TRIAL_REELS
-        value: false
+        value: true
+      - key: MONGODB_URI
+        sync: false
+      - key: MONGODB_DATABASE
+        value: instagram_studio
+      - key: CLOUDINARY_CLOUD_NAME
+        sync: false
+      - key: CLOUDINARY_API_KEY
+        sync: false
+      - key: CLOUDINARY_API_SECRET
+        sync: false
+      - key: CLOUDINARY_FOLDER
+        value: instagram-studio
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
+      - key: SCHEDULER_INTERVAL_SECONDS
+        value: 30

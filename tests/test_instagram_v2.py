@@ -95,6 +95,23 @@ def test_short_token_is_exchanged_for_long_lived_token(monkeypatch):
     )
 
 
+def test_long_lived_token_refresh_uses_instagram_refresh_endpoint(monkeypatch):
+    FakeAsyncClient.response = FakeResponse(
+        {"access_token": "refreshed-test-token", "expires_in": 5184000}
+    )
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = asyncio.run(instagram.refresh_long_lived_token("old-test-token"))
+
+    assert result["access_token"] == "refreshed-test-token"
+    assert FakeAsyncClient.last_request["url"] == (
+        "https://graph.instagram.com/refresh_access_token"
+    )
+    assert FakeAsyncClient.last_request["params"]["grant_type"] == (
+        "ig_refresh_token"
+    )
+
+
 def test_normal_reel_payload_is_unchanged(monkeypatch):
     FakeAsyncClient.response = FakeResponse({"id": "creation-id"})
     monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
