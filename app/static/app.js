@@ -425,6 +425,24 @@ $('calendarPrev').addEventListener('click',()=>{calendarCursor.setMonth(calendar
 $('calendarNext').addEventListener('click',()=>{calendarCursor.setMonth(calendarCursor.getMonth()+1);loadCalendar();});
 
 function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
+function renderAssistantReport(report,createdAt=''){
+  const root=$('statsAssistantReport');root.innerHTML='';
+  if(!report){root.innerHTML='<p class="muted">Synchronise au moins 3 publications, puis lance l’analyse.</p>';$('statsAssistantMeta').textContent='';return;}
+  const summary=document.createElement('p');summary.className='assistant-summary';summary.textContent=report.summary||'Analyse terminée.';root.appendChild(summary);
+  const sections=[
+    ['Recommandations',report.recommendations],
+    ['Hooks',report.hook_findings],
+    ['Heures de publication',report.timing_findings],
+    ['Tests à essayer',report.experiments],
+    ['À garder en tête',report.cautions]
+  ];
+  for(const [title,values] of sections){
+    if(!Array.isArray(values)||!values.length)continue;
+    const section=document.createElement('section');section.innerHTML='<h3></h3><ul></ul>';section.querySelector('h3').textContent=title;
+    for(const value of values){const item=document.createElement('li');item.textContent=value;section.querySelector('ul').appendChild(item);}root.appendChild(section);
+  }
+  $('statsAssistantMeta').textContent=createdAt?`Dernière analyse : ${new Date(createdAt).toLocaleString('fr-FR')}`:'Analyse Groq enregistrée dans le Studio.';
+}
 function renderAnalytics(data){
   const summary=data.summary||{};
   $('statsMediaCount').textContent=formatStat(summary.media_count);
@@ -464,6 +482,7 @@ function renderAnalytics(data){
     const link=row.querySelector('.permalink');if(item.permalink)link.href=item.permalink;else link.classList.add('hidden');posts.appendChild(row);
   }
   if(!posts.children.length)posts.innerHTML='<p class="muted">Aucune publication synchronisée.</p>';
+  renderAssistantReport(data.assistant_report,data.assistant_report_created_at);
 }
 async function loadAnalytics(){
   hideNotice('statsNotice');
@@ -481,9 +500,19 @@ $('syncStatsBtn').addEventListener('click',async()=>{
   }catch(err){setNotice('statsNotice',err.message,'error');}
   finally{button.disabled=false;button.textContent='Synchroniser avec Instagram';}
 });
+$('analyzeStatsBtn').addEventListener('click',async()=>{
+  if(!confirm('Envoyer à Groq uniquement les chiffres agrégés et caractéristiques anonymisées des hooks pour générer ton analyse ?'))return;
+  const button=$('analyzeStatsBtn');button.disabled=true;button.textContent='Analyse…';hideNotice('statsAssistantNotice');
+  try{
+    const data=await api('/api/analytics/assistant',{method:'POST'});
+    renderAssistantReport(data.report,new Date().toISOString());
+    setNotice('statsAssistantNotice',`Analyse terminée avec ${data.model}.`,'success');
+  }catch(err){setNotice('statsAssistantNotice',err.message,'error');}
+  finally{button.disabled=false;button.textContent='Analyser mes performances';}
+});
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
-function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked};}
+function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked};}
 async function pushRegistration(){if(!('serviceWorker'in navigator))throw new Error('Service workers non pris en charge.');return navigator.serviceWorker.ready;}
 async function refreshPushState(){
   if(!('Notification'in window)||!('serviceWorker'in navigator)){setNotice('pushNotice','Les notifications ne sont pas prises en charge sur ce navigateur.','error');return;}

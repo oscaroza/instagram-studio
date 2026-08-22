@@ -13,6 +13,7 @@ DEFAULT_PREFERENCES = {
     "published": True,
     "failed": True,
     "manual_music": True,
+    "studio_login": True,
 }
 
 

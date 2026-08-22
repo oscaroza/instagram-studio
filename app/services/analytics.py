@@ -479,6 +479,7 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
             "Échantillon encore limité : interprète ces tendances comme des pistes, pas comme des certitudes."
         )
     state = db.analytics_state.find_one({"_id": "primary"}) or {}
+    report = db.analytics_reports.find_one({"_id": "latest"}) or {}
     return {
         "summary": {
             "media_count": len(documents),
@@ -501,4 +502,25 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
             "last_error": str(state.get("last_error", "")),
             "permission_required": bool(state.get("permission_required", False)),
         },
+        "assistant_report": report.get("report"),
+        "assistant_report_created_at": _iso(report.get("created_at")),
     }
+
+
+def save_analytics_report(
+    report: dict[str, Any],
+    based_on_sync_at: str | None,
+    model: str,
+) -> None:
+    database().analytics_reports.update_one(
+        {"_id": "latest"},
+        {
+            "$set": {
+                "report": report,
+                "based_on_sync_at": based_on_sync_at,
+                "model": model,
+                "created_at": utc_now(),
+            }
+        },
+        upsert=True,
+    )

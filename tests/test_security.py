@@ -2,9 +2,11 @@ from contextlib import contextmanager
 
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app.config import settings
 from app.main import app
 from app.routes import v2
+from app.services.push_notifications import DEFAULT_PREFERENCES
 
 
 @contextmanager
@@ -53,6 +55,39 @@ def test_login_sets_http_only_session_and_unlocks_studio():
             assert "HttpOnly" in response.headers["set-cookie"]
             assert "SameSite=lax" in response.headers["set-cookie"]
             assert client.get("/").status_code == 200
+
+
+def test_successful_login_sends_privacy_safe_push(monkeypatch):
+    calls = []
+
+    async def fake_send_notification(**kwargs):
+        calls.append(kwargs)
+        return 1
+
+    monkeypatch.setattr(main_module, "send_notification", fake_send_notification)
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            response = client.post(
+                "/login",
+                data={"access_code": "test-only-code", "next": "/"},
+                follow_redirects=False,
+            )
+
+    assert response.status_code == 303
+    assert calls == [
+        {
+            "preference": "studio_login",
+            "title": "Connexion au Studio",
+            "body": "Une connexion réussie vient d’être effectuée.",
+            "url": "/?tab=settings",
+            "tag": "studio-login",
+        }
+    ]
+    assert "test-only-code" not in str(calls)
+    assert DEFAULT_PREFERENCES["studio_login"] is True
 
 
 def test_session_cookie_expires_after_five_idle_minutes_and_slides():
@@ -164,6 +199,9 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'data-tab="stats"' in page.text
     assert 'id="stats"' in page.text
     assert 'id="syncStatsBtn"' in page.text
+    assert 'id="analyzeStatsBtn"' in page.text
+    assert 'id="statsAssistantReport"' in page.text
+    assert 'id="notifyLogin"' in page.text
     assert 'data-tab="settings"' in page.text
     assert 'id="settings"' in page.text
 

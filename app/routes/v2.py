@@ -9,8 +9,10 @@ from app.config import settings
 from app.services.analytics import (
     AnalyticsError,
     build_analytics_dashboard,
+    save_analytics_report,
     sync_instagram_analytics,
 )
+from app.services.cerebras import CerebrasError, analyze_instagram_performance
 from app.services.cloudinary_media import (
     CloudinaryMediaError,
     cloudinary_configured,
@@ -169,6 +171,39 @@ async def synchronize_analytics():
     except Exception:
         return api_error("Synchronisation Instagram temporairement indisponible.", 503)
     return {"ok": True, "sync": result}
+
+
+@router.post("/analytics/assistant")
+async def run_analytics_assistant():
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        dashboard = await asyncio.to_thread(build_analytics_dashboard)
+        summary = dashboard.get("summary") or {}
+        if int(summary.get("media_count", 0)) < 3:
+            return api_error(
+                "Synchronise au moins 3 publications avant de lancer l’assistant.",
+                409,
+            )
+        if not any(int(summary.get(name, 0)) for name in ("views", "reach", "interactions")):
+            return api_error(
+                "Les publications synchronisées ne contiennent pas encore assez de statistiques.",
+                409,
+            )
+        report = await analyze_instagram_performance(dashboard)
+        await asyncio.to_thread(
+            save_analytics_report,
+            report,
+            (dashboard.get("sync") or {}).get("last_synced_at"),
+            settings.cerebras_model,
+        )
+    except CerebrasError as exc:
+        return api_error(str(exc), 502)
+    except AnalyticsError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Assistant Groq temporairement indisponible.", 503)
+    return {"ok": True, "report": report, "model": settings.cerebras_model}
 
 
 @router.get("/library")

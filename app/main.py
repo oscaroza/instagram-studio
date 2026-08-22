@@ -5,6 +5,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import (
+    BackgroundTasks,
     FastAPI,
     File,
     Form,
@@ -57,6 +58,7 @@ from app.services.database import (
     utc_now,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.push_notifications import send_notification
 from app.services.token_store import (
     resolve_instagram_credentials,
     save_credentials,
@@ -225,6 +227,7 @@ async def login_page(request: Request, next: str = "/"):
 @app.post("/login", response_class=HTMLResponse)
 async def login(
     request: Request,
+    background_tasks: BackgroundTasks,
     access_code: str = Form(...),
     next: str = Form("/"),
 ):
@@ -263,6 +266,14 @@ async def login(
         secure=settings.studio_cookie_secure,
         samesite="lax",
         path="/",
+    )
+    background_tasks.add_task(
+        send_notification,
+        preference="studio_login",
+        title="Connexion au Studio",
+        body="Une connexion réussie vient d’être effectuée.",
+        url="/?tab=settings",
+        tag="studio-login",
     )
     return response
 

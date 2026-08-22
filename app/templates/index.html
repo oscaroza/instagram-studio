@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=11">
+  <link rel="stylesheet" href="/static/styles.css?v=12">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert">
@@ -191,6 +191,19 @@
         </div>
       </div>
       <div class="card result-card">
+        <div class="row-between">
+          <div>
+            <h2>Assistant Groq</h2>
+            <p class="muted">Un conseiller personnel pour transformer tes statistiques en actions concrètes.</p>
+          </div>
+          <button id="analyzeStatsBtn" class="primary" type="button">Analyser mes performances</button>
+        </div>
+        <p class="muted small">Groq reçoit uniquement les chiffres agrégés et les caractéristiques anonymisées des hooks — jamais les textes complets, vidéos, tokens, URL ou nom d’utilisateur.</p>
+        <div id="statsAssistantNotice" class="notice hidden"></div>
+        <p id="statsAssistantMeta" class="muted small"></p>
+        <div id="statsAssistantReport" class="assistant-report"><p class="muted">Synchronise au moins 3 publications, puis lance l’analyse.</p></div>
+      </div>
+      <div class="card result-card">
         <h2>Hooks et historique des performances</h2>
         <p class="muted">Les hooks sont comparés avec les statistiques actuelles et l’évolution depuis le relevé précédent.</p>
         <div id="statsPosts" class="stats-posts"><p class="muted">Aucune publication synchronisée.</p></div>
@@ -218,6 +231,7 @@
           <label class="toggle-row"><input id="notifyPublished" type="checkbox" checked><span>Après une publication réussie</span></label>
           <label class="toggle-row"><input id="notifyFailed" type="checkbox" checked><span>En cas d’échec</span></label>
           <label class="toggle-row"><input id="notifyMusic" type="checkbox" checked><span>Quand un Reel avec musique est prêt</span></label>
+          <label class="toggle-row"><input id="notifyLogin" type="checkbox" checked><span>Quand quelqu’un se connecte au Studio</span></label>
         </div>
         <button id="savePushPrefs" class="secondary" type="button">Enregistrer les préférences</button>
       </div>
@@ -273,6 +287,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=11"></script>
+  <script src="/static/app.js?v=13"></script>
 </body>
 </html>

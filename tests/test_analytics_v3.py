@@ -1,6 +1,8 @@
+import asyncio
+import json
 from datetime import datetime, timezone
 
-from app.services import analytics, instagram
+from app.services import analytics, cerebras, instagram
 
 
 class FakeCursor(list):
@@ -28,6 +30,40 @@ class FakeDatabase:
     def __init__(self, media):
         self.instagram_media = FakeCollection(media)
         self.analytics_state = FakeCollection([])
+        self.analytics_reports = FakeCollection([])
+
+
+class FakeGroqResponse:
+    status_code = 200
+    text = ""
+
+    def json(self):
+        report = {
+            "summary": "Bilan prudent.",
+            "recommendations": ["Tester deux créneaux."],
+            "hook_findings": ["Comparer les hooks courts et longs."],
+            "timing_findings": ["Échantillon limité."],
+            "experiments": ["Publier deux variantes."],
+            "cautions": ["Corrélation uniquement."],
+        }
+        return {"choices": [{"message": {"content": json.dumps(report)}}]}
+
+
+class FakeGroqClient:
+    last_payload = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        return None
+
+    async def post(self, url, json=None, headers=None):
+        type(self).last_payload = json
+        return FakeGroqResponse()
 
 
 def test_oauth_requests_insights_permission():
@@ -95,3 +131,38 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     assert dashboard["best_times"][0]["hour"] == 18
     assert dashboard["top_posts"][0]["delta_views"] == 300
     assert dashboard["automatic_findings"]
+
+
+def test_groq_analysis_never_sends_caption_or_complete_hook(monkeypatch):
+    dashboard = {
+        "summary": {"media_count": 3, "views": 2000, "reach": 1500, "interactions": 120},
+        "best_times": [{"weekday": "Lundi", "hour": 18, "count": 3}],
+        "top_posts": [
+            {
+                "caption": "CAPTION-PRIVEE-A-NE-PAS-ENVOYER",
+                "hook": "HOOK-COMPLET-A-NE-PAS-ENVOYER ?",
+                "media_kind": "reel",
+                "views": 2000,
+                "reach": 1500,
+                "interactions": 120,
+                "engagement_rate": 8,
+                "permalink": "https://instagram.com/private",
+            }
+        ],
+    }
+    monkeypatch.setattr(cerebras.httpx, "AsyncClient", FakeGroqClient)
+    previous_key = cerebras.settings.cerebras_api_key
+    object.__setattr__(cerebras.settings, "cerebras_api_key", "test-only-key")
+    try:
+        report = asyncio.run(cerebras.analyze_instagram_performance(dashboard))
+    finally:
+        object.__setattr__(cerebras.settings, "cerebras_api_key", previous_key)
+
+    transmitted = json.dumps(FakeGroqClient.last_payload, ensure_ascii=False)
+    assert report["summary"] == "Bilan prudent."
+    assert "CAPTION-PRIVEE-A-NE-PAS-ENVOYER" not in transmitted
+    assert "HOOK-COMPLET-A-NE-PAS-ENVOYER" not in transmitted
+    assert "instagram.com/private" not in transmitted
+    user_content = FakeGroqClient.last_payload["messages"][1]["content"]
+    assert '"views": 2000' in user_content
+    assert '"contains_question": true' in user_content

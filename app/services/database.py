@@ -60,6 +60,7 @@ def ensure_indexes() -> None:
     db.instagram_insight_snapshots.create_index(
         [("media_id", ASCENDING), ("captured_at", ASCENDING)]
     )
+    db.analytics_reports.create_index("created_at")
 
 
 def object_id(value: str) -> ObjectId:
