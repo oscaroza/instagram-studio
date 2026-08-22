@@ -143,12 +143,32 @@ def build_facebook_business_login_url() -> str:
 async def get_instagram_business_account(
     access_token: str,
 ) -> dict[str, str]:
+    """
+    Recherche le compte Instagram professionnel relié
+    aux Pages accessibles par le token Meta.
+
+    On teste :
+    - instagram_business_account
+    - connected_instagram_account
+
+    Puis on refait une vérification Page par Page.
+    """
+
+    if not access_token:
+        raise InstagramError(
+            "Access token Meta vide."
+        )
+
+    # --------------------------------------------------------
+    # ÉTAPE 1 : récupérer les Pages disponibles
+    # --------------------------------------------------------
+
     params = {
         "fields": (
             "id,"
             "name,"
-            "access_token,"
-            "instagram_business_account"
+            "instagram_business_account,"
+            "connected_instagram_account"
         ),
         "access_token": access_token,
     }
@@ -164,7 +184,7 @@ async def get_instagram_business_account(
     if response.status_code >= 400:
         raise InstagramError(
             "Impossible de récupérer les Pages Facebook : "
-            f"{response.text[:900]}"
+            f"{response.text[:1200]}"
         )
 
     payload = response.json()
@@ -174,30 +194,263 @@ async def get_instagram_business_account(
         [],
     )
 
+    if not pages:
+        raise InstagramError(
+            "Meta accepte le token mais /me/accounts "
+            "ne renvoie aucune Page Facebook. "
+            "Vérifie que la Page Oskyview a bien été autorisée "
+            "pendant Facebook Login for Business."
+        )
+
+    # --------------------------------------------------------
+    # ÉTAPE 2 : chercher directement dans /me/accounts
+    # --------------------------------------------------------
+
     for page in pages:
-        ig_account = page.get(
+        page_id = str(
+            page.get(
+                "id",
+                "",
+            )
+        )
+
+        page_name = str(
+            page.get(
+                "name",
+                "",
+            )
+        )
+
+        instagram_business = page.get(
             "instagram_business_account"
         )
 
+        connected_instagram = page.get(
+            "connected_instagram_account"
+        )
+
+        # Cas classique Instagram Graph API
         if (
-            ig_account
-            and ig_account.get("id")
+            isinstance(
+                instagram_business,
+                dict,
+            )
+            and instagram_business.get("id")
         ):
             return {
                 "instagram_user_id": str(
-                    ig_account["id"]
+                    instagram_business["id"]
                 ),
-                "page_id": str(
-                    page.get("id", "")
-                ),
-                "page_name": str(
-                    page.get("name", "")
+                "page_id": page_id,
+                "page_name": page_name,
+                "instagram_source": (
+                    "instagram_business_account"
                 ),
             }
 
+        # Deuxième type de liaison possible
+        if (
+            isinstance(
+                connected_instagram,
+                dict,
+            )
+            and connected_instagram.get("id")
+        ):
+            return {
+                "instagram_user_id": str(
+                    connected_instagram["id"]
+                ),
+                "page_id": page_id,
+                "page_name": page_name,
+                "instagram_source": (
+                    "connected_instagram_account"
+                ),
+            }
+
+    # --------------------------------------------------------
+    # ÉTAPE 3 :
+    # refaire une requête Page par Page.
+    #
+    # Meta ne renvoie parfois pas tous les champs imbriqués
+    # directement dans /me/accounts.
+    # --------------------------------------------------------
+
+    diagnostics = []
+
+    async with httpx.AsyncClient(
+        timeout=30
+    ) as client:
+
+        for page in pages:
+            page_id = str(
+                page.get(
+                    "id",
+                    "",
+                )
+            )
+
+            page_name = str(
+                page.get(
+                    "name",
+                    "",
+                )
+            )
+
+            if not page_id:
+                continue
+
+            detail_params = {
+                "fields": (
+                    "id,"
+                    "name,"
+                    "instagram_business_account,"
+                    "connected_instagram_account"
+                ),
+                "access_token": access_token,
+            }
+
+            detail_response = await client.get(
+                api_url(page_id),
+                params=detail_params,
+            )
+
+            if detail_response.status_code >= 400:
+                diagnostics.append(
+                    {
+                        "page_id": page_id,
+                        "page_name": page_name,
+                        "detail_error": (
+                            detail_response.text[:300]
+                        ),
+                    }
+                )
+
+                continue
+
+            detail = detail_response.json()
+
+            instagram_business = detail.get(
+                "instagram_business_account"
+            )
+
+            connected_instagram = detail.get(
+                "connected_instagram_account"
+            )
+
+            diagnostics.append(
+                {
+                    "page_id": page_id,
+                    "page_name": page_name,
+                    "instagram_business_account": (
+                        instagram_business.get("id")
+                        if isinstance(
+                            instagram_business,
+                            dict,
+                        )
+                        else None
+                    ),
+                    "connected_instagram_account": (
+                        connected_instagram.get("id")
+                        if isinstance(
+                            connected_instagram,
+                            dict,
+                        )
+                        else None
+                    ),
+                }
+            )
+
+            if (
+                isinstance(
+                    instagram_business,
+                    dict,
+                )
+                and instagram_business.get("id")
+            ):
+                return {
+                    "instagram_user_id": str(
+                        instagram_business["id"]
+                    ),
+                    "page_id": page_id,
+                    "page_name": (
+                        str(
+                            detail.get(
+                                "name",
+                                page_name,
+                            )
+                        )
+                    ),
+                    "instagram_source": (
+                        "instagram_business_account"
+                    ),
+                }
+
+            if (
+                isinstance(
+                    connected_instagram,
+                    dict,
+                )
+                and connected_instagram.get("id")
+            ):
+                return {
+                    "instagram_user_id": str(
+                        connected_instagram["id"]
+                    ),
+                    "page_id": page_id,
+                    "page_name": (
+                        str(
+                            detail.get(
+                                "name",
+                                page_name,
+                            )
+                        )
+                    ),
+                    "instagram_source": (
+                        "connected_instagram_account"
+                    ),
+                }
+
+    # --------------------------------------------------------
+    # Aucun compte trouvé.
+    #
+    # On renvoie un diagnostic SANS access_token.
+    # --------------------------------------------------------
+
+    safe_pages = []
+
+    for page in pages:
+        safe_pages.append(
+            {
+                "id": page.get("id"),
+                "name": page.get("name"),
+
+                "instagram_business_account": (
+                    page.get(
+                        "instagram_business_account"
+                    )
+                ),
+
+                "connected_instagram_account": (
+                    page.get(
+                        "connected_instagram_account"
+                    )
+                ),
+            }
+        )
+
+    diagnostic_text = json.dumps(
+        {
+            "pages_from_me_accounts": safe_pages,
+            "page_details": diagnostics,
+        },
+        ensure_ascii=False,
+    )
+
     raise InstagramError(
-        "Aucun compte Instagram professionnel "
-        "relié à une Page Facebook n'a été trouvé."
+        "Meta a accepté le token et les Pages sont accessibles, "
+        "mais aucun compte Instagram relié n'a été trouvé. "
+        "Diagnostic Meta : "
+        f"{diagnostic_text[:3000]}"
     )
 
 
@@ -312,6 +565,7 @@ async def wait_until_ready(
             )
 
         await asyncio.sleep(5)
+
         elapsed += 5
 
     raise InstagramError(
