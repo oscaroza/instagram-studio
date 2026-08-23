@@ -206,6 +206,133 @@ def test_login_attempts_are_limited_without_storing_sensitive_values():
     login_security.reset_local_login_security()
 
 
+def test_security_push_is_sent_when_attempt_limit_is_reached(monkeypatch):
+    login_security.reset_local_login_security()
+    calls = []
+
+    async def fake_send_notification(**kwargs):
+        calls.append(kwargs)
+        return 1
+
+    monkeypatch.setattr(main_module, "send_notification", fake_send_notification)
+    headers = {"user-agent": "Lockout-Notification-Test/iPhone Safari"}
+    with temporary_settings(
+        studio_access_code="123456",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+        login_max_attempts=3,
+    ):
+        with TestClient(app) as client:
+            for _ in range(3):
+                response = client.post(
+                    "/login", data={"access_code": "000000"}, headers=headers
+                )
+
+    assert response.status_code == 429
+    assert calls == [
+        {
+            "preference": "security_lockout",
+            "title": "Accès au Studio temporairement bloqué",
+            "body": "iPhone • Safari a été bloqué après 3 codes incorrects.",
+            "url": "/?tab=settings",
+            "tag": calls[0]["tag"],
+        }
+    ]
+    assert "000000" not in str(calls)
+    assert "123456" not in str(calls)
+    assert DEFAULT_PREFERENCES["security_lockout"] is True
+    login_security.reset_local_login_security()
+
+
+def test_manual_device_block_rejects_correct_code_and_can_be_removed():
+    login_security.reset_local_login_security()
+    context = {
+        "client_hash": "a" * 64,
+        "device": "iPhone",
+        "browser": "Safari",
+    }
+    with temporary_settings(mongodb_uri=""):
+        login_security.record_login_success(context)
+        login_security.set_device_blocked(context["client_hash"], True)
+        blocked = login_security.login_attempt_status(context["client_hash"])
+        security = login_security.list_login_security(
+            current_client_hash="b" * 64
+        )
+        login_security.set_device_blocked(context["client_hash"], False)
+        unblocked = login_security.login_attempt_status(context["client_hash"])
+
+    assert blocked["allowed"] is False
+    assert blocked["block_type"] == "manual"
+    assert security["devices"][0]["blocked"] is True
+    assert security["devices"][0]["block_type"] == "manual"
+    assert unblocked["allowed"] is True
+    login_security.reset_local_login_security()
+
+
+def test_current_device_cannot_block_itself_from_settings():
+    login_security.reset_local_login_security()
+    headers = {"user-agent": "Current-Device-Test/iPhone Safari"}
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+    ):
+        with TestClient(app) as client:
+            client.post(
+                "/login",
+                data={"access_code": "test-only-code"},
+                headers=headers,
+            )
+            history = client.get(
+                "/api/security/login-history", headers=headers
+            ).json()
+            current = next(device for device in history["devices"] if device["current"])
+            response = client.post(
+                f"/api/security/devices/{current['device_key']}/block",
+                headers=headers,
+            )
+
+    assert response.status_code == 409
+    assert "actuellement" in response.json()["error"]
+    login_security.reset_local_login_security()
+
+
+def test_blocked_device_loses_existing_session_and_correct_code_is_rejected():
+    login_security.reset_local_login_security()
+    headers = {"user-agent": "Blocked-Session-Test/iPhone Safari"}
+    with temporary_settings(
+        studio_access_code="123456",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "123456"}, headers=headers)
+            history = client.get(
+                "/api/security/login-history", headers=headers
+            ).json()
+            device_key = history["devices"][0]["device_key"]
+            login_security.set_device_blocked(device_key, True)
+
+            protected = client.get("/", headers=headers, follow_redirects=False)
+            correct_code = client.post(
+                "/login", data={"access_code": "123456"}, headers=headers
+            )
+            login_security.set_device_blocked(device_key, False)
+            restored = client.post(
+                "/login",
+                data={"access_code": "123456"},
+                headers=headers,
+                follow_redirects=False,
+            )
+
+    assert protected.status_code == 303
+    assert protected.headers["location"] == "/login"
+    assert correct_code.status_code == 403
+    assert "bon code" in correct_code.text
+    assert restored.status_code == 303
+    login_security.reset_local_login_security()
+
+
 def test_login_history_endpoint_is_visible_in_settings():
     login_security.reset_local_login_security()
     with temporary_settings(
@@ -227,6 +354,7 @@ def test_login_history_endpoint_is_visible_in_settings():
     assert history.status_code == 200
     assert history.json()["events"][0]["success"] is True
     assert history.json()["events"][0]["device"] == "iPhone"
+    assert "devices" in history.json()
     login_security.reset_local_login_security()
 
 
@@ -280,6 +408,23 @@ def test_instagram_token_alert_is_available_without_exposing_token():
     assert health.json()["source"] == "environment"
     assert "private-test-token" not in health.text
     assert "private-test-token" not in page.text
+
+
+def test_security_device_interface_and_notification_option_are_available():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert 'id="notifySecurityLockout"' in page.text
+    assert 'id="blockedDevicesSummary"' in page.text
+    assert 'id="loginDevices"' in page.text
+    assert "changeDeviceAccess" in script.text
+    assert "security_lockout" in script.text
 
 
 def test_music_finalization_prepares_files_for_native_share():

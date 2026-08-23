@@ -4,7 +4,7 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 
 ## Fonctionnalités
 
-- accès par code côté serveur avec cookie de session sécurisé, limitation des essais et historique de connexion respectueux de la vie privée ;
+- accès par code côté serveur avec limitation des essais, alerte de sécurité, historique et blocage manuel réversible des appareils reconnus ;
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
 - publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 JPEG ;
@@ -108,6 +108,8 @@ Web Push nécessite iOS/iPadOS 16.4 ou plus récent et l’application ajoutée 
 La session d’accès est renouvelée uniquement lors d’une interaction avec le Studio. Après 5 minutes sans activité, le serveur refuse les nouvelles actions et l’interface affiche une bannière demandant d’actualiser la page pour se reconnecter. Le même contrôle s’applique au retour dans la PWA après plus de 5 minutes en arrière-plan. Cette déconnexion ne supprime ni le token Instagram chiffré ni les programmations.
 
 Par défaut, 5 codes incorrects sur une fenêtre de 15 minutes bloquent les nouveaux essais pendant 15 minutes. L’historique affiché dans **Réglages** est conservé 90 jours : il contient seulement la date, le type d’appareil, le navigateur et le résultat. Le code saisi et l’adresse IP brute ne sont jamais enregistrés.
+
+Une préférence Push séparée prévient lorsque ce blocage automatique se déclenche. Depuis **Réglages → Sécurité des appareils**, un appareil reconnu peut aussi être bloqué manuellement — y compris si le bon code est saisi — puis débloqué. Cette protection utilise un identifiant signé conservé dans un cookie `HttpOnly` : elle peut être contournée en changeant de navigateur ou en effaçant les données du site, et ne remplace donc pas un vrai compte utilisateur ou une passkey.
 
 ## Programmation
 

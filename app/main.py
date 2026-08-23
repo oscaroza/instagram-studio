@@ -71,6 +71,8 @@ from app.services.publication_safety import (
     release_publication_claim,
 )
 from app.services.login_security import (
+    attach_login_device_cookie,
+    device_is_manually_blocked,
     login_attempt_status,
     login_client_context,
     record_login_failure,
@@ -164,8 +166,26 @@ async def require_studio_session(request: Request, call_next):
     )
 
     authenticated = False if public else request_is_authenticated(request)
+    device_blocked = False
+    if authenticated:
+        client_context = login_client_context(request)
+        device_blocked = await asyncio.to_thread(
+            device_is_manually_blocked, client_context["client_hash"]
+        )
+        if device_blocked:
+            authenticated = False
     try:
-        if public or authenticated:
+        if device_blocked and path.startswith("/api/"):
+            response = JSONResponse(
+                {
+                    "ok": False,
+                    "error": "Cet appareil a été bloqué dans les Réglages du Studio.",
+                },
+                status_code=403,
+            )
+        elif device_blocked:
+            response = RedirectResponse("/login", status_code=303)
+        elif public or authenticated:
             response = await call_next(request)
         elif path.startswith("/api/"):
             response = JSONResponse(
@@ -200,6 +220,15 @@ async def require_studio_session(request: Request, call_next):
             samesite="lax",
             path="/",
         )
+    if device_blocked:
+        response.delete_cookie(
+            SESSION_COOKIE,
+            path="/",
+            secure=settings.studio_cookie_secure,
+            httponly=True,
+            samesite="lax",
+        )
+    attach_login_device_cookie(request, response)
     return response
 
 
@@ -222,7 +251,12 @@ def json_error(
 
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request, next: str = "/"):
-    if request_is_authenticated(request):
+    client_context = login_client_context(request)
+    attempt_status = await asyncio.to_thread(
+        login_attempt_status, client_context["client_hash"]
+    )
+    manually_blocked = attempt_status.get("block_type") == "manual"
+    if request_is_authenticated(request) and not manually_blocked:
         return RedirectResponse(safe_next_path(next), status_code=303)
 
     return templates.TemplateResponse(
@@ -231,7 +265,12 @@ async def login_page(request: Request, next: str = "/"):
         context={
             "configured": access_control_configured(),
             "next_path": safe_next_path(next),
-            "error": "",
+            "error": (
+                "Cet appareil et ce navigateur ont été bloqués dans le Studio."
+                if manually_blocked
+                else ""
+            ),
+            "access_blocked": manually_blocked,
         },
     )
 
@@ -254,6 +293,7 @@ async def login(
                 "configured": False,
                 "next_path": next_path,
                 "error": "STUDIO_ACCESS_CODE doit être configuré côté serveur.",
+                "access_blocked": False,
             },
             status_code=503,
         )
@@ -262,16 +302,25 @@ async def login(
         login_attempt_status, client_context["client_hash"]
     )
     if not attempt_status["allowed"]:
-        minutes = max(1, (attempt_status["retry_after_seconds"] + 59) // 60)
+        if attempt_status.get("block_type") == "manual":
+            error = "Cet appareil et ce navigateur ont été bloqués dans le Studio."
+            status_code = 403
+            access_blocked = True
+        else:
+            minutes = max(1, (attempt_status["retry_after_seconds"] + 59) // 60)
+            error = f"Trop de tentatives. Réessaie dans {minutes} min."
+            status_code = 429
+            access_blocked = False
         return templates.TemplateResponse(
             request=request,
             name="login.html",
             context={
                 "configured": True,
                 "next_path": next_path,
-                "error": f"Trop de tentatives. Réessaie dans {minutes} min.",
+                "error": error,
+                "access_blocked": access_blocked,
             },
-            status_code=429,
+            status_code=status_code,
         )
 
     if not access_code_matches(access_code):
@@ -284,6 +333,17 @@ async def login(
                 f"{settings.login_lockout_minutes} min."
             )
             status_code = 429
+            background_tasks.add_task(
+                send_notification,
+                preference="security_lockout",
+                title="Accès au Studio temporairement bloqué",
+                body=(
+                    f"{client_context['device']} • {client_context['browser']} a été "
+                    f"bloqué après {settings.login_max_attempts} codes incorrects."
+                ),
+                url="/?tab=settings",
+                tag=f"security-lockout-{client_context['client_hash'][:12]}",
+            )
         else:
             remaining = failed_status["remaining_attempts"]
             error = f"Code d’accès incorrect. {remaining} essai(s) restant(s)."
@@ -295,6 +355,7 @@ async def login(
                 "configured": True,
                 "next_path": next_path,
                 "error": error,
+                "access_blocked": False,
             },
             status_code=status_code,
         )

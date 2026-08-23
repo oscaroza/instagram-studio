@@ -7,7 +7,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>Accès • Instagram Studio</title>
-  <link rel="stylesheet" href="/static/styles.css?v=16">
+  <link rel="stylesheet" href="/static/styles.css?v=17">
 </head>
 <body>
   <main class="shell narrow login-shell">
@@ -16,7 +16,9 @@
       <h1>Instagram Studio</h1>
       <p class="muted">Entre le code d’accès du Studio. Il reste uniquement côté serveur.</p>
       {% if error %}<div class="notice error">{{ error }}</div>{% endif %}
-      {% if configured %}
+      {% if access_blocked %}
+      <p class="muted small">Le bon code ne permettra pas de se connecter tant que cet appareil n’aura pas été débloqué depuis un autre appareil autorisé.</p>
+      {% elif configured %}
       <form method="post" action="/login" class="login-form">
         <input type="hidden" name="next" value="{{ next_path }}">
         <label>Code d’accès

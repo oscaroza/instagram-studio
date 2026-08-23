@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from app.config import settings
@@ -51,7 +51,11 @@ from app.services.local_media import (
     local_media_path,
     mute_local_video,
 )
-from app.services.login_security import list_login_history
+from app.services.login_security import (
+    list_login_security,
+    login_client_context,
+    set_device_blocked,
+)
 from app.services.token_store import token_health
 
 
@@ -161,12 +165,41 @@ async def v2_status():
 
 
 @router.get("/security/login-history")
-async def login_history():
+async def login_history(request: Request):
     try:
-        events = await asyncio.to_thread(list_login_history, 30)
+        current = login_client_context(request)
+        security = await asyncio.to_thread(
+            list_login_security,
+            current_client_hash=current["client_hash"],
+            limit=30,
+        )
     except Exception:
         return api_error("Historique des connexions temporairement indisponible.", 503)
-    return {"ok": True, "events": events}
+    return {"ok": True, **security}
+
+
+@router.post("/security/devices/{device_key}/block")
+async def block_login_device(device_key: str, request: Request):
+    current = login_client_context(request)
+    if device_key == current["client_hash"]:
+        return api_error(
+            "Tu ne peux pas bloquer l’appareil que tu utilises actuellement.",
+            409,
+        )
+    try:
+        await asyncio.to_thread(set_device_blocked, device_key, True)
+    except ValueError as exc:
+        return api_error(str(exc), 404)
+    return {"ok": True}
+
+
+@router.post("/security/devices/{device_key}/unblock")
+async def unblock_login_device(device_key: str):
+    try:
+        await asyncio.to_thread(set_device_blocked, device_key, False)
+    except ValueError as exc:
+        return api_error(str(exc), 404)
+    return {"ok": True}
 
 
 @router.get("/instagram/token-health")

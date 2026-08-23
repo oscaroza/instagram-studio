@@ -471,20 +471,50 @@ async function loadInstagramTokenHealth(){
   }catch(err){target.textContent=err.message;target.className='cap-off';}
 }
 async function loadLoginHistory(){
-  const root=$('loginHistory');
-  root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('loginHistoryNotice');
+  const root=$('loginHistory'),devicesRoot=$('loginDevices');
+  root.innerHTML='<p class="muted">Chargement…</p>';devicesRoot.innerHTML='';hideNotice('loginHistoryNotice');
   try{
-    const data=await api('/api/security/login-history');root.innerHTML='';
+    const data=await api('/api/security/login-history');root.innerHTML='';devicesRoot.innerHTML='';
+    const blocked=(data.devices||[]).filter(device=>device.blocked).length;
+    $('blockedDevicesSummary').innerHTML='<strong></strong><span></span>';
+    $('blockedDevicesSummary').querySelector('strong').textContent=`${blocked} appareil(s) bloqué(s)`;
+    $('blockedDevicesSummary').querySelector('span').textContent=`${(data.devices||[]).length} appareil(s) ou navigateur(s) reconnus`;
+    if(!(data.devices||[]).length)devicesRoot.innerHTML='<p class="muted">Aucun appareil enregistré pour le moment.</p>';
+    for(const device of data.devices||[]){
+      const card=document.createElement('article');card.className=`security-device${device.blocked?' blocked':''}`;
+      card.innerHTML='<div class="security-device-main"><div class="row-between"><strong class="name"></strong><span class="pill status"></span></div><p class="last-seen"></p></div><div class="security-device-actions"></div>';
+      card.querySelector('.name').textContent=`${device.device} • ${device.browser}`;
+      const status=card.querySelector('.status');
+      if(!device.manageable){status.textContent='Historique ancien';status.classList.add('warn');}
+      else if(device.current){status.textContent='Cet appareil';status.classList.add('ok');}
+      else if(device.block_type==='manual'){status.textContent='Bloqué manuellement';status.classList.add('warn');}
+      else if(device.block_type==='temporary'){status.textContent='Bloqué après 5 essais';status.classList.add('warn');}
+      else{status.textContent='Autorisé';status.classList.add('ok');}
+      let details=`Dernière activité : ${new Date(device.last_seen_at).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'})}`;
+      if(device.locked_until)details+=` • déblocage automatique ${new Date(device.locked_until).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'})}`;
+      card.querySelector('.last-seen').textContent=details;
+      if(device.manageable&&!device.current){
+        const button=document.createElement('button');button.type='button';button.className=device.blocked?'secondary':'danger';button.textContent=device.blocked?'Débloquer':'Bloquer cet appareil';
+        button.onclick=()=>changeDeviceAccess(device,!device.blocked);card.querySelector('.security-device-actions').appendChild(button);
+      }
+      devicesRoot.appendChild(card);
+    }
     if(!data.events.length){root.innerHTML='<p class="muted">Aucune connexion enregistrée pour le moment.</p>';return;}
     for(const event of data.events){
       const row=document.createElement('div');row.className='draft-item';
       const date=new Date(event.created_at).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'});
       row.innerHTML='<div class="row-between"><strong></strong><span class="pill"></span></div><p></p>';
       row.querySelector('strong').textContent=`${event.device} • ${event.browser}`;
-      const status=row.querySelector('.pill');status.textContent=event.success?'Connexion réussie':'Essai refusé';status.classList.add(event.success?'ok':'warn');
+      const status=row.querySelector('.pill');status.textContent=event.blocked?'Appareil bloqué':event.success?'Connexion réussie':'Essai refusé';status.classList.add(event.blocked||!event.success?'warn':'ok');
       row.querySelector('p').textContent=date;root.appendChild(row);
     }
-  }catch(err){root.innerHTML='';setNotice('loginHistoryNotice',err.message,'error');}
+  }catch(err){root.innerHTML='';devicesRoot.innerHTML='';$('blockedDevicesSummary').textContent='Sécurité indisponible';setNotice('loginHistoryNotice',err.message,'error');}
+}
+async function changeDeviceAccess(device,block){
+  const action=block?'bloquer':'débloquer';
+  if(!confirm(`${block?'Bloquer':'Débloquer'} ${device.device} • ${device.browser} ?${block?' Même avec le bon code, ce navigateur ne pourra plus entrer dans le Studio.':''}`))return;
+  try{await api(`/api/security/devices/${encodeURIComponent(device.device_key)}/${block?'block':'unblock'}`,{method:'POST'});setNotice('loginHistoryNotice',`Appareil ${action === 'bloquer'?'bloqué':'débloqué'} ✅`,'success');await loadLoginHistory();}
+  catch(err){setNotice('loginHistoryNotice',err.message,'error');}
 }
 $('refreshLoginHistory').addEventListener('click',loadLoginHistory);
 $('studioSoundEnabled').addEventListener('change',(event)=>{
@@ -787,7 +817,7 @@ $('analyzeStatsBtn').addEventListener('click',async()=>{
 $('statsSort').addEventListener('change',renderAnalyticsPosts);
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
-function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked,instagram_token:$('notifyToken').checked};}
+function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked,instagram_token:$('notifyToken').checked,security_lockout:$('notifySecurityLockout').checked};}
 async function pushRegistration(){if(!('serviceWorker'in navigator))throw new Error('Service workers non pris en charge.');return navigator.serviceWorker.ready;}
 async function refreshPushState(){
   if(!('Notification'in window)||!('serviceWorker'in navigator)){setNotice('pushNotice','Les notifications ne sont pas prises en charge sur ce navigateur.','error');return;}

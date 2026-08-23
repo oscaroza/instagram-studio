@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=16">
+  <link rel="stylesheet" href="/static/styles.css?v=17">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -316,6 +316,7 @@
           <label class="toggle-row"><input id="notifyMusic" type="checkbox" checked><span>Quand une publication avec musique est prête</span></label>
           <label class="toggle-row"><input id="notifyLogin" type="checkbox" checked><span>Quand quelqu’un se connecte au Studio</span></label>
           <label class="toggle-row"><input id="notifyToken" type="checkbox" checked><span>Si le token Instagram expire bientôt ou si son renouvellement échoue</span></label>
+          <label class="toggle-row"><input id="notifySecurityLockout" type="checkbox" checked><span>Quand 5 codes incorrects bloquent temporairement un appareil</span></label>
         </div>
         <button id="savePushPrefs" class="secondary" type="button">Enregistrer les préférences</button>
       </div>
@@ -361,14 +362,19 @@
       <div class="card result-card">
         <div class="row-between">
           <div>
-            <h2>Connexions récentes</h2>
-            <p class="muted">Connexions acceptées et essais refusés des 90 derniers jours.</p>
+            <h2>Sécurité des appareils</h2>
+            <p class="muted">Surveille, bloque ou débloque les appareils et navigateurs déjà vus par le Studio.</p>
           </div>
           <button id="refreshLoginHistory" class="ghost" type="button">Actualiser</button>
         </div>
         <div id="loginHistoryNotice" class="notice hidden"></div>
-        <div id="loginHistory" class="draft-list"><p class="muted">Chargement…</p></div>
-        <p class="muted small">Le Studio n’enregistre ni le code saisi ni l’adresse IP brute.</p>
+        <div id="blockedDevicesSummary" class="security-summary"><span>Chargement des appareils…</span></div>
+        <div id="loginDevices" class="security-devices"></div>
+        <details class="security-history">
+          <summary>Voir l’historique des connexions</summary>
+          <div id="loginHistory" class="draft-list"><p class="muted">Chargement…</p></div>
+        </details>
+        <p class="muted small">Le Studio n’enregistre ni le code saisi ni l’adresse IP brute. Le blocage utilise un identifiant protégé conservé dans ce navigateur : effacer les données du site ou changer de navigateur peut contourner cette protection.</p>
       </div>
       <div class="card result-card">
         <h2>Capabilities de publication</h2>
@@ -384,6 +390,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=19"></script>
 </body>
 </html>

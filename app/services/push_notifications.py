@@ -15,6 +15,7 @@ DEFAULT_PREFERENCES = {
     "manual_music": True,
     "studio_login": True,
     "instagram_token": True,
+    "security_lockout": True,
 }
 
 
