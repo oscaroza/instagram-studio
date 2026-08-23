@@ -11,21 +11,104 @@ class CerebrasError(RuntimeError):
     pass
 
 
-def _extract_json(text: str) -> dict[str, Any]:
-    text = text.strip()
+CAPTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "caption": {"type": "string"},
+        "hashtags": {"type": "array", "items": {"type": "string"}},
+        "alt_text": {"type": "string"},
+        "hook": {"type": "string"},
+        "notes": {"type": "string"},
+    },
+    "required": ["caption", "hashtags", "alt_text", "hook", "notes"],
+    "additionalProperties": False,
+}
+
+ANALYTICS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "recommendations": {"type": "array", "items": {"type": "string"}},
+        "hook_findings": {"type": "array", "items": {"type": "string"}},
+        "timing_findings": {"type": "array", "items": {"type": "string"}},
+        "experiments": {"type": "array", "items": {"type": "string"}},
+        "cautions": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": [
+        "summary",
+        "recommendations",
+        "hook_findings",
+        "timing_findings",
+        "experiments",
+        "cautions",
+    ],
+    "additionalProperties": False,
+}
+
+STRICT_JSON_MODELS = {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
+
+
+def _response_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:
+    if settings.cerebras_model in STRICT_JSON_MODELS:
+        return {
+            "type": "json_schema",
+            "json_schema": {"name": name, "strict": True, "schema": schema},
+        }
+    return {"type": "json_object"}
+
+
+def _extract_json(content: Any) -> dict[str, Any]:
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str) or not content.strip():
+        raise CerebrasError("L'IA n'a pas renvoyé de JSON valide.")
+
+    text = content.strip().lstrip("\ufeff")
     if text.startswith("```"):
-        text = re.sub(r"^```(?:json)?\\s*", "", text)
-        text = re.sub(r"\\s*```$", "", text)
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        match = re.search(r"\{.*\}", text, flags=re.S)
-        if not match:
-            raise CerebrasError("L'IA n'a pas renvoyé de JSON valide.")
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.I)
+        text = re.sub(r"\s*```\s*$", "", text)
+
+    def decode(candidate: str) -> dict[str, Any] | None:
         try:
-            return json.loads(match.group(0))
-        except json.JSONDecodeError as exc:
-            raise CerebrasError("Impossible de parser la réponse de l'IA.") from exc
+            value = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+        return value if isinstance(value, dict) else None
+
+    parsed = decode(text)
+    if parsed is not None:
+        return parsed
+
+    # Tolère une phrase avant/après le JSON sans utiliser une regex gloutonne,
+    # qui échoue dès que la réponse contient plusieurs accolades.
+    decoder = json.JSONDecoder()
+    for index, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+
+    # Réparation locale des virgules finales, erreur fréquente des modèles.
+    repaired = re.sub(r",\s*([}\]])", r"\1", text)
+    if repaired != text:
+        parsed = decode(repaired)
+        if parsed is not None:
+            return parsed
+        for index, character in enumerate(repaired):
+            if character != "{":
+                continue
+            try:
+                value, _ = decoder.raw_decode(repaired[index:])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, dict):
+                return value
+
+    raise CerebrasError("L'IA n'a pas renvoyé de JSON valide.")
 
 
 async def generate_caption(
@@ -69,6 +152,7 @@ Consignes supplémentaires: {extra or 'aucune'}
         ],
         "temperature": 0.7,
         "max_completion_tokens": 700,
+        "response_format": _response_format("instagram_caption", CAPTION_SCHEMA),
     }
     headers = {
         "Authorization": f"Bearer {settings.cerebras_api_key}",
@@ -158,6 +242,9 @@ Ne présente jamais une corrélation comme une causalité. Si l'échantillon est
         ],
         "temperature": 0.25,
         "max_completion_tokens": 1100,
+        "response_format": _response_format(
+            "instagram_performance_analysis", ANALYTICS_SCHEMA
+        ),
     }
     headers = {
         "Authorization": f"Bearer {settings.cerebras_api_key}",

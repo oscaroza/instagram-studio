@@ -167,3 +167,7 @@ def test_groq_analysis_never_sends_caption_or_complete_hook(monkeypatch):
     user_content = FakeGroqClient.last_payload["messages"][1]["content"]
     assert '"views": 2000' in user_content
     assert '"contains_question": true' in user_content
+    response_format = FakeGroqClient.last_payload["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"]["additionalProperties"] is False
