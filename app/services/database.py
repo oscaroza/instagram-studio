@@ -65,6 +65,10 @@ def ensure_indexes() -> None:
     db.login_rate_limits.create_index("updated_at", expireAfterSeconds=86400)
     db.login_events.create_index("created_at", expireAfterSeconds=7776000)
     db.blocked_devices.create_index("updated_at")
+    db.passkeys.create_index("created_at")
+    db.passkey_challenges.create_index("expires_at", expireAfterSeconds=0)
+    db.analytics_assistant_messages.create_index("created_at")
+    db.analytics_assistant_messages.create_index("expires_at", expireAfterSeconds=0)
 
 
 def object_id(value: str) -> ObjectId:

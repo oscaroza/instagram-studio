@@ -670,3 +670,52 @@ def save_analytics_report(
         },
         upsert=True,
     )
+
+
+def list_assistant_messages(limit: int = 40) -> list[dict[str, Any]]:
+    if not database_configured():
+        raise AnalyticsError("MONGODB_URI est nécessaire pour l’historique de l’assistant.")
+    documents = list(
+        database().analytics_assistant_messages.find({})
+        .sort("created_at", -1)
+        .limit(max(1, min(limit, 100)))
+    )
+    documents.reverse()
+    return [
+        {
+            "id": str(item.get("_id")),
+            "role": str(item.get("role") or "assistant"),
+            "content": str(item.get("content") or ""),
+            "created_at": _iso(item.get("created_at")),
+        }
+        for item in documents
+    ]
+
+
+def save_assistant_exchange(question: str, answer: str, period_days: int) -> None:
+    now = utc_now()
+    expiration = now + timedelta(days=90)
+    database().analytics_assistant_messages.insert_many(
+        [
+            {
+                "role": "user",
+                "content": question.strip()[:1200],
+                "period_days": period_days,
+                "created_at": now,
+                "expires_at": expiration,
+            },
+            {
+                "role": "assistant",
+                "content": answer.strip()[:5000],
+                "period_days": period_days,
+                "created_at": now + timedelta(microseconds=1),
+                "expires_at": expiration,
+            },
+        ]
+    )
+
+
+def clear_assistant_messages() -> int:
+    if not database_configured():
+        raise AnalyticsError("MONGODB_URI est nécessaire pour l’historique de l’assistant.")
+    return int(database().analytics_assistant_messages.delete_many({}).deleted_count)

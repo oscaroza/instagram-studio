@@ -78,6 +78,7 @@ from app.services.login_security import (
     record_login_failure,
     record_login_success,
 )
+from app.services.passkeys import passkey_available
 from app.security import (
     SESSION_COOKIE,
     access_code_matches,
@@ -153,6 +154,8 @@ PUBLIC_PATHS = {
     "/login",
     "/sw.js",
     "/auth/facebook/callback",
+    "/api/passkeys/authenticate/options",
+    "/api/passkeys/authenticate/verify",
 }
 
 
@@ -256,6 +259,7 @@ async def login_page(request: Request, next: str = "/"):
         login_attempt_status, client_context["client_hash"]
     )
     manually_blocked = attempt_status.get("block_type") == "manual"
+    passkey_ready = await asyncio.to_thread(passkey_available)
     if request_is_authenticated(request) and not manually_blocked:
         return RedirectResponse(safe_next_path(next), status_code=303)
 
@@ -271,6 +275,7 @@ async def login_page(request: Request, next: str = "/"):
                 else ""
             ),
             "access_blocked": manually_blocked,
+            "passkey_ready": passkey_ready,
         },
     )
 
@@ -284,6 +289,7 @@ async def login(
 ):
     next_path = safe_next_path(next)
     client_context = login_client_context(request)
+    passkey_ready = await asyncio.to_thread(passkey_available)
 
     if not access_control_configured():
         return templates.TemplateResponse(
@@ -294,6 +300,7 @@ async def login(
                 "next_path": next_path,
                 "error": "STUDIO_ACCESS_CODE doit être configuré côté serveur.",
                 "access_blocked": False,
+                "passkey_ready": passkey_ready,
             },
             status_code=503,
         )
@@ -319,6 +326,7 @@ async def login(
                 "next_path": next_path,
                 "error": error,
                 "access_blocked": access_blocked,
+                "passkey_ready": passkey_ready,
             },
             status_code=status_code,
         )
@@ -356,6 +364,7 @@ async def login(
                 "next_path": next_path,
                 "error": error,
                 "access_blocked": False,
+                "passkey_ready": passkey_ready,
             },
             status_code=status_code,
         )

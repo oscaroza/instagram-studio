@@ -141,10 +141,10 @@ function activateTab(name){
   tab.classList.add('active');panel.classList.add('active');
   history.replaceState({},'',`?tab=${name}`);
   if(name==='drafts')renderDrafts();
-  if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();}
+  if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();loadPasskeys();}
   if(name==='library')loadLibrary();
   if(name==='calendar')loadCalendar();
-  if(name==='stats')loadAnalytics();
+  if(name==='stats'){loadAnalytics();loadAssistantChat();}
   if(name==='notifications')refreshPushState();
 }
 for(const tab of document.querySelectorAll('.tab')){
@@ -523,6 +523,40 @@ $('studioSoundEnabled').addEventListener('change',(event)=>{
 });
 $('testStudioSoundBtn').addEventListener('click',playStudioChime);
 
+async function loadPasskeys(){
+  const root=$('passkeyList');root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('passkeyNotice');
+  const supported=Boolean(window.Passkeys?.supported());$('registerPasskeyBtn').disabled=!supported;
+  if(!supported){root.innerHTML='<p class="muted">Les passkeys ne sont pas prises en charge sur ce navigateur.</p>';return;}
+  try{
+    const data=await api('/api/passkeys');root.innerHTML='';
+    if(!data.items.length)root.innerHTML='<p class="muted">Aucune passkey configurée. Ajoute d’abord Face ID depuis cet appareil.</p>';
+    for(const item of data.items){
+      const card=document.createElement('article');card.className='passkey-item';card.innerHTML='<div><strong class="label"></strong><p class="details"></p></div><button class="danger" type="button">Supprimer</button>';
+      card.querySelector('.label').textContent=item.label;
+      const created=item.created_at?new Date(item.created_at).toLocaleDateString('fr-FR'):'date inconnue';
+      const used=item.last_used_at?` • dernière utilisation ${new Date(item.last_used_at).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'})}`:'';
+      card.querySelector('.details').textContent=`Ajoutée le ${created}${used}${item.backed_up?' • synchronisée':''}`;
+      card.querySelector('button').onclick=()=>removePasskey(item);root.appendChild(card);
+    }
+  }catch(err){root.innerHTML='';setNotice('passkeyNotice',err.message,'error');}
+}
+async function removePasskey(item){
+  if(!confirm(`Supprimer « ${item.label} » ? Le code d’accès restera disponible.`))return;
+  try{await api(`/api/passkeys/${encodeURIComponent(item.id)}`,{method:'DELETE'});setNotice('passkeyNotice','Passkey supprimée.','success');await loadPasskeys();}
+  catch(err){setNotice('passkeyNotice',err.message,'error');}
+}
+$('registerPasskeyBtn').addEventListener('click',async()=>{
+  const button=$('registerPasskeyBtn');button.disabled=true;button.textContent='Préparation Face ID…';hideNotice('passkeyNotice');
+  try{
+    if(!window.Passkeys?.supported())throw new Error('Les passkeys ne sont pas prises en charge sur ce navigateur.');
+    const options=await api('/api/passkeys/register/options',{method:'POST'});
+    const credential=await window.Passkeys.create(options.public_key);
+    await api('/api/passkeys/register/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ceremony_id:options.ceremony_id,credential,label:'Face ID / passkey'})});
+    setNotice('passkeyNotice','Face ID / passkey est maintenant prêt pour les prochaines connexions.','success');await loadPasskeys();
+  }catch(err){setNotice('passkeyNotice',err?.name==='NotAllowedError'?'La création de la passkey a été annulée ou a expiré.':err.message,'error');}
+  finally{button.disabled=false;button.textContent='Ajouter Face ID / passkey';}
+});
+
 async function loadV2Status(){
   const pill=$('mongoStatusPill'),text=$('mongoStatusText'),cloudPill=$('cloudinaryStatusPill'),cloudText=$('cloudinaryStatusText');
   try{
@@ -881,6 +915,35 @@ $('analyzeStatsBtn').addEventListener('click',async()=>{
 $('statsSort').addEventListener('change',renderAnalyticsPosts);
 $('statsPeriod').addEventListener('change',()=>{try{localStorage.setItem('igstudio.statsPeriod',$('statsPeriod').value);}catch{}loadAnalytics();});
 try{const savedPeriod=localStorage.getItem('igstudio.statsPeriod');if(['7','30','90'].includes(savedPeriod))$('statsPeriod').value=savedPeriod;}catch{}
+
+function renderAssistantChat(messages=[]){
+  const root=$('assistantChatMessages');root.innerHTML='';
+  if(!messages.length){root.innerHTML='<p class="muted">Commence par poser une question sur tes statistiques.</p>';return;}
+  for(const message of messages){
+    const bubble=document.createElement('article');bubble.className=`assistant-chat-message ${message.role==='user'?'user':'assistant'}`;
+    const label=document.createElement('strong');label.textContent=message.role==='user'?'Toi':'Assistant Groq';
+    const content=document.createElement('p');content.textContent=message.content||'';bubble.append(label,content);root.appendChild(bubble);
+  }
+  root.scrollTop=root.scrollHeight;
+}
+async function loadAssistantChat(){
+  try{const data=await api('/api/analytics/assistant/chat');renderAssistantChat(data.messages||[]);}
+  catch(err){setNotice('assistantChatNotice',err.message,'error');}
+}
+$('assistantChatForm').addEventListener('submit',async event=>{
+  event.preventDefault();const input=$('assistantChatInput');const message=input.value.trim();if(!message)return;
+  const button=$('assistantChatSend');button.disabled=true;button.textContent='Réflexion…';hideNotice('assistantChatNotice');
+  try{
+    await api(`/api/analytics/assistant/chat?period_days=${statsPeriodValue()}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({message})});
+    input.value='';await loadAssistantChat();
+  }catch(err){setNotice('assistantChatNotice',err.message,'error');}
+  finally{button.disabled=false;button.textContent='Envoyer à l’assistant';}
+});
+$('clearAssistantChat').addEventListener('click',async()=>{
+  if(!confirm('Effacer tout l’historique de conversation de l’assistant ?'))return;
+  try{await api('/api/analytics/assistant/chat',{method:'DELETE'});renderAssistantChat([]);setNotice('assistantChatNotice','Historique effacé.','success');}
+  catch(err){setNotice('assistantChatNotice',err.message,'error');}
+});
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
 function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked,instagram_token:$('notifyToken').checked,security_lockout:$('notifySecurityLockout').checked};}

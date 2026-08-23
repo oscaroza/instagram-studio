@@ -216,20 +216,15 @@ def _hook_features(hook: str) -> dict[str, Any]:
     }
 
 
-async def analyze_instagram_performance(
-    dashboard: dict[str, Any],
-) -> dict[str, Any]:
-    """Analyze anonymized aggregates without sending captions or hook text."""
-    if not settings.cerebras_api_key:
-        raise CerebrasError("CEREBRAS_API_KEY n'est pas configurée.")
-
-    compact_data = {
+def _compact_analytics_data(dashboard: dict[str, Any]) -> dict[str, Any]:
+    growth_series = dashboard.get("growth_series") or []
+    return {
         "summary": dashboard.get("summary") or {},
         "period_comparison": dashboard.get("period_comparison") or {},
         "growth": {
-            "points": len(dashboard.get("growth_series") or []),
-            "first": (dashboard.get("growth_series") or [{}])[0],
-            "last": (dashboard.get("growth_series") or [{}])[-1],
+            "points": len(growth_series),
+            "first": (growth_series or [{}])[0],
+            "last": (growth_series or [{}])[-1],
         },
         "best_times": (dashboard.get("best_times") or [])[:8],
         "top_posts": [
@@ -244,6 +239,16 @@ async def analyze_instagram_performance(
             for item in (dashboard.get("top_posts") or [])[:25]
         ],
     }
+
+
+async def analyze_instagram_performance(
+    dashboard: dict[str, Any],
+) -> dict[str, Any]:
+    """Analyze anonymized aggregates without sending captions or hook text."""
+    if not settings.cerebras_api_key:
+        raise CerebrasError("CEREBRAS_API_KEY n'est pas configurée.")
+
+    compact_data = _compact_analytics_data(dashboard)
     system_prompt = """Tu es l'assistant stratégique d'un créateur Instagram drone/FPV.
 Analyse uniquement les données agrégées fournies. Retourne UNIQUEMENT un objet JSON valide :
 {
@@ -303,3 +308,57 @@ Utilise la comparaison de période et la croissance seulement quand elles contie
             values = [values]
         result[key] = [str(value)[:600] for value in values[:8]]
     return result
+
+
+async def chat_instagram_performance(
+    dashboard: dict[str, Any],
+    question: str,
+) -> str:
+    if not settings.cerebras_api_key:
+        raise CerebrasError("CEREBRAS_API_KEY n'est pas configurée.")
+    cleaned_question = question.strip()[:1200]
+    if not cleaned_question:
+        raise CerebrasError("Écris une question pour l’assistant.")
+    system_prompt = (
+        "Tu es le conseiller Instagram personnel d’un créateur drone/FPV. Réponds en "
+        "français, de façon concise, concrète et prudente. Utilise uniquement les statistiques "
+        "agrégées fournies. Tu n’as accès ni aux vidéos, ni aux textes complets, ni aux tokens "
+        "ou secrets. N’invente aucun chiffre et ne transforme pas une corrélation en causalité. "
+        "Si les données ne permettent pas de répondre, dis-le."
+    )
+    payload = {
+        "model": settings.cerebras_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": "Statistiques anonymisées :\n"
+                + json.dumps(_compact_analytics_data(dashboard), ensure_ascii=False)
+                + "\n\nQuestion actuelle :\n"
+                + cleaned_question,
+            },
+        ],
+        "temperature": 0.3,
+        "max_completion_tokens": 1400,
+        **_reasoning_options(),
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.cerebras_api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            f"{settings.cerebras_base_url}/chat/completions",
+            json=payload,
+            headers=headers,
+        )
+    if response.status_code >= 400:
+        raise _groq_error(response)
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise CerebrasError("Réponse Groq inattendue.") from exc
+    answer = str(content or "").strip()
+    if not answer:
+        raise CerebrasError("Groq n’a pas renvoyé de réponse.")
+    return answer[:5000]

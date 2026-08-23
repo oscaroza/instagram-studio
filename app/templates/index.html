@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=18">
+  <link rel="stylesheet" href="/static/styles.css?v=19">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -254,6 +254,20 @@
         <div id="statsAssistantNotice" class="notice hidden"></div>
         <p id="statsAssistantMeta" class="muted small"></p>
         <div id="statsAssistantReport" class="assistant-report"><p class="muted">Synchronise au moins 3 publications, puis lance l’analyse.</p></div>
+        <div class="assistant-chat">
+          <div class="row-between assistant-chat-header">
+            <div><h3>Discuter avec ton assistant</h3><p class="muted small">Pose une question précise sur tes vues, hooks, formats ou horaires.</p></div>
+            <button id="clearAssistantChat" class="ghost" type="button">Effacer</button>
+          </div>
+          <div id="assistantChatMessages" class="assistant-chat-messages"><p class="muted">Aucune conversation.</p></div>
+          <form id="assistantChatForm" class="assistant-chat-form">
+            <label for="assistantChatInput">Ta question</label>
+            <textarea id="assistantChatInput" maxlength="1200" rows="3" placeholder="Ex : qu’est-ce que je devrais tester sur mes trois prochains Reels ?" required></textarea>
+            <button id="assistantChatSend" class="primary" type="submit">Envoyer à l’assistant</button>
+          </form>
+          <div id="assistantChatNotice" class="notice hidden"></div>
+          <p class="muted small">La question actuelle et les statistiques anonymisées sont envoyées à Groq. Les anciennes conversations restent dans MongoDB pendant 90 jours mais ne sont pas renvoyées à Groq.</p>
+        </div>
       </div>
       <div class="card result-card">
         <div class="row-between stats-history-header">
@@ -384,6 +398,18 @@
         <p class="muted small">Ce réglage reste uniquement dans ce navigateur. Il ne modifie pas le son des notifications iOS.</p>
       </div>
       <div class="card result-card">
+        <div class="row-between passkey-header">
+          <div>
+            <h2>Face ID et passkeys</h2>
+            <p class="muted">Entre avec Face ID, Touch ID ou le verrouillage sécurisé de ton appareil.</p>
+          </div>
+          <button id="registerPasskeyBtn" class="primary" type="button">Ajouter Face ID / passkey</button>
+        </div>
+        <div id="passkeyNotice" class="notice hidden"></div>
+        <div id="passkeyList" class="passkey-list"><p class="muted">Chargement…</p></div>
+        <p class="muted small">L’enregistrement exige d’abord le code du Studio. La biométrie reste dans l’appareil et n’est jamais envoyée au serveur. Le code reste disponible en secours.</p>
+      </div>
+      <div class="card result-card">
         <div class="row-between">
           <div>
             <h2>Sécurité des appareils</h2>
@@ -414,6 +440,7 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/passkeys.js?v=1"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>

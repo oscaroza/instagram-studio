@@ -2,17 +2,24 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.services.analytics import (
     AnalyticsError,
     build_analytics_dashboard,
+    clear_assistant_messages,
+    list_assistant_messages,
+    save_assistant_exchange,
     save_analytics_report,
     sync_instagram_analytics,
 )
-from app.services.cerebras import CerebrasError, analyze_instagram_performance
+from app.services.cerebras import (
+    CerebrasError,
+    analyze_instagram_performance,
+    chat_instagram_performance,
+)
 from app.services.cloudinary_media import (
     CloudinaryMediaError,
     cloudinary_configured,
@@ -37,6 +44,7 @@ from app.services.push_notifications import (
     delete_subscription,
     push_configured,
     save_subscription,
+    send_notification,
     update_preferences,
 )
 from app.services.publication_safety import (
@@ -53,8 +61,26 @@ from app.services.local_media import (
 )
 from app.services.login_security import (
     list_login_security,
+    login_attempt_status,
     login_client_context,
+    record_login_success,
     set_device_blocked,
+)
+from app.services.passkeys import (
+    PasskeyError,
+    authentication_options,
+    delete_passkey,
+    list_passkeys,
+    registration_options,
+    verify_authentication,
+    verify_registration,
+)
+from app.security import (
+    SESSION_COOKIE,
+    create_session_token,
+    request_is_authenticated,
+    safe_next_path,
+    session_max_age_seconds,
 )
 from app.services.token_store import token_health
 
@@ -202,6 +228,134 @@ async def unblock_login_device(device_key: str):
     return {"ok": True}
 
 
+@router.get("/passkeys")
+async def get_passkeys(request: Request):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour gérer les passkeys.", 401)
+    try:
+        items = await asyncio.to_thread(list_passkeys)
+    except PasskeyError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Passkeys temporairement indisponibles.", 503)
+    return {"ok": True, "items": items}
+
+
+@router.post("/passkeys/register/options")
+async def begin_passkey_registration(request: Request):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour ajouter une passkey.", 401)
+    context = login_client_context(request)
+    try:
+        result = await asyncio.to_thread(registration_options, context["client_hash"])
+    except PasskeyError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Création de la passkey temporairement indisponible.", 503)
+    return {"ok": True, **result}
+
+
+@router.post("/passkeys/register/verify")
+async def finish_passkey_registration(request: Request, payload: dict):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour ajouter une passkey.", 401)
+    context = login_client_context(request)
+    credential = payload.get("credential")
+    if not isinstance(credential, dict):
+        return api_error("Réponse passkey invalide.")
+    try:
+        item = await asyncio.to_thread(
+            verify_registration,
+            str(payload.get("ceremony_id") or ""),
+            credential,
+            context["client_hash"],
+            str(payload.get("label") or "Face ID / passkey"),
+        )
+    except PasskeyError as exc:
+        return api_error(str(exc), 400)
+    except Exception:
+        return api_error("Enregistrement de la passkey temporairement indisponible.", 503)
+    return {"ok": True, "passkey": item}
+
+
+@router.delete("/passkeys/{credential_id}")
+async def remove_passkey(credential_id: str, request: Request):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour supprimer une passkey.", 401)
+    try:
+        deleted = await asyncio.to_thread(delete_passkey, credential_id)
+    except PasskeyError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Suppression de la passkey temporairement indisponible.", 503)
+    if not deleted:
+        return api_error("Passkey introuvable.", 404)
+    return {"ok": True}
+
+
+@router.post("/passkeys/authenticate/options")
+async def begin_passkey_authentication(request: Request):
+    context = login_client_context(request)
+    status = await asyncio.to_thread(login_attempt_status, context["client_hash"])
+    if not status["allowed"]:
+        return api_error("Cet appareil est actuellement bloqué.", 403)
+    try:
+        result = await asyncio.to_thread(authentication_options, context["client_hash"])
+    except PasskeyError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Face ID/passkey temporairement indisponible.", 503)
+    return {"ok": True, **result}
+
+
+@router.post("/passkeys/authenticate/verify")
+async def finish_passkey_authentication(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    payload: dict,
+):
+    context = login_client_context(request)
+    status = await asyncio.to_thread(login_attempt_status, context["client_hash"])
+    if not status["allowed"]:
+        return api_error("Cet appareil est actuellement bloqué.", 403)
+    credential = payload.get("credential")
+    if not isinstance(credential, dict):
+        return api_error("Réponse passkey invalide.")
+    try:
+        await asyncio.to_thread(
+            verify_authentication,
+            str(payload.get("ceremony_id") or ""),
+            credential,
+            context["client_hash"],
+        )
+        await asyncio.to_thread(record_login_success, context)
+    except PasskeyError as exc:
+        return api_error(str(exc), 401)
+    except Exception:
+        return api_error("Connexion Face ID/passkey temporairement indisponible.", 503)
+    response = JSONResponse(
+        {"ok": True, "next": safe_next_path(str(payload.get("next") or "/"))}
+    )
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=create_session_token(),
+        max_age=session_max_age_seconds(),
+        httponly=True,
+        secure=settings.studio_cookie_secure,
+        samesite="lax",
+        path="/",
+    )
+    background_tasks.add_task(
+        send_notification,
+        preference="studio_login",
+        title="Connexion au Studio",
+        body="Une connexion Face ID/passkey vient d’être effectuée.",
+        url="/?tab=settings",
+        tag="studio-login",
+    )
+    return response
+
+
 @router.get("/instagram/token-health")
 async def instagram_token_health():
     try:
@@ -270,6 +424,60 @@ async def run_analytics_assistant(period_days: int = 30):
     except Exception:
         return api_error("Assistant Groq temporairement indisponible.", 503)
     return {"ok": True, "report": report, "model": settings.cerebras_model}
+
+
+@router.get("/analytics/assistant/chat")
+async def analytics_assistant_history():
+    try:
+        messages = await asyncio.to_thread(list_assistant_messages)
+    except AnalyticsError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Historique de l’assistant temporairement indisponible.", 503)
+    return {"ok": True, "messages": messages}
+
+
+@router.post("/analytics/assistant/chat")
+async def ask_analytics_assistant(payload: dict, period_days: int = 30):
+    question = str(payload.get("message") or "").strip()
+    if not question:
+        return api_error("Écris une question pour l’assistant.")
+    if len(question) > 1200:
+        return api_error("La question est trop longue (1 200 caractères maximum).")
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        dashboard = await asyncio.to_thread(
+            build_analytics_dashboard,
+            period_days=period_days,
+        )
+        if int((dashboard.get("summary") or {}).get("media_count", 0)) < 3:
+            return api_error("Synchronise au moins 3 publications avant de discuter.", 409)
+        answer = await chat_instagram_performance(dashboard, question)
+        await asyncio.to_thread(
+            save_assistant_exchange,
+            question,
+            answer,
+            int((dashboard.get("period_comparison") or {}).get("days", 30)),
+        )
+    except CerebrasError as exc:
+        return api_error(str(exc), 502)
+    except AnalyticsError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Assistant Groq temporairement indisponible.", 503)
+    return {"ok": True, "answer": answer, "model": settings.cerebras_model}
+
+
+@router.delete("/analytics/assistant/chat")
+async def delete_analytics_assistant_history():
+    try:
+        deleted = await asyncio.to_thread(clear_assistant_messages)
+    except AnalyticsError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Suppression de l’historique temporairement indisponible.", 503)
+    return {"ok": True, "deleted": deleted}
 
 
 @router.post("/publications/preflight")

@@ -15,6 +15,8 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;
 - dashboard statistique avec comparaison sur 7, 30 ou 90 jours et courbe d’évolution fondée sur les relevés MongoDB ;
+- assistant Groq conversationnel dont l’historique reste dans MongoDB et n’est pas renvoyé automatiquement à Groq ;
+- connexion Face ID, Touch ID ou passkey WebAuthn, avec le code d’accès conservé comme secours ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement ;
 - vérification avant envoi et protection de 15 minutes contre une double publication identique.
 
@@ -111,6 +113,18 @@ La session d’accès est renouvelée uniquement lors d’une interaction avec l
 Par défaut, 5 codes incorrects sur une fenêtre de 15 minutes bloquent les nouveaux essais pendant 15 minutes. L’historique affiché dans **Réglages** est conservé 90 jours : il contient seulement la date, le type d’appareil, le navigateur et le résultat. Le code saisi et l’adresse IP brute ne sont jamais enregistrés.
 
 Une préférence Push séparée prévient lorsque ce blocage automatique se déclenche. Depuis **Réglages → Sécurité des appareils**, un appareil reconnu peut aussi être bloqué manuellement — y compris si le bon code est saisi — puis débloqué. Cette protection utilise un identifiant signé conservé dans un cookie `HttpOnly` : elle peut être contournée en changeant de navigateur ou en effaçant les données du site, et ne remplace donc pas un vrai compte utilisateur ou une passkey.
+
+## Face ID et passkeys
+
+Ouvre d’abord le Studio avec le code, puis va dans **Réglages → Face ID et passkeys → Ajouter Face ID / passkey**. Aux connexions suivantes, l’iPhone proposera Face ID. Le visage et les données biométriques restent entièrement dans l’appareil ; MongoDB conserve seulement la clé publique nécessaire à la vérification.
+
+`APP_BASE_URL` doit être l’adresse HTTPS exacte du service Render. La passkey est liée à ce domaine : si le Studio change de domaine, il faudra l’enregistrer de nouveau. Aucune configuration Meta ou Apple Developer supplémentaire n’est nécessaire pour l’utilisation depuis Safari ou la PWA du même domaine.
+
+Le code d’accès reste volontairement disponible comme secours. Une passkey respecte aussi les blocages manuels et temporaires de l’appareil.
+
+## Assistant conversationnel
+
+Dans **Stats → Assistant Groq**, les questions sont enregistrées avec les réponses dans MongoDB pendant 90 jours et peuvent être effacées à tout moment. Chaque requête envoie à Groq uniquement la question actuelle et les statistiques agrégées/anonymisées ; les captions, hooks complets, vidéos, URL, tokens et anciennes conversations ne sont pas envoyés.
 
 ## Programmation
 
