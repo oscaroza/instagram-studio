@@ -44,7 +44,7 @@ Voir `.env.example` et `render.yaml`. Les secrets ne doivent jamais être commit
 ```env
 APP_BASE_URL=https://TON-SERVICE.onrender.com
 STUDIO_ACCESS_CODE=...
-STUDIO_IDLE_MINUTES=5
+STUDIO_IDLE_MINUTES=10
 # Facultatif : les valeurs par défaut ci-dessous sont déjà actives
 LOGIN_MAX_ATTEMPTS=5
 LOGIN_WINDOW_MINUTES=15
@@ -108,7 +108,9 @@ Web Push nécessite iOS/iPadOS 16.4 ou plus récent et l’application ajoutée 
 
 ## Sécurité de session
 
-La session d’accès est renouvelée uniquement lors d’une interaction avec le Studio. Après 5 minutes sans activité, le serveur refuse les nouvelles actions et l’interface affiche une bannière demandant d’actualiser la page pour se reconnecter. Le même contrôle s’applique au retour dans la PWA après plus de 5 minutes en arrière-plan. Cette déconnexion ne supprime ni le token Instagram chiffré ni les programmations.
+La session d’accès est renouvelée uniquement lors d’une interaction avec le Studio. Après 10 minutes sans activité, le serveur refuse les nouvelles actions et l’interface affiche une bannière demandant d’actualiser la page pour se reconnecter. Le même contrôle s’applique au retour dans la PWA après plus de 10 minutes en arrière-plan. Cette déconnexion ne supprime ni le token Instagram chiffré ni les programmations. Si `STUDIO_IDLE_MINUTES` existe déjà dans Render, règle aussi sa valeur sur `10`.
+
+L’onglet **Personnaliser** permet de choisir une palette, les couleurs principales, la densité et l’arrondi des cartes. Ces préférences sont validées côté serveur puis enregistrées dans MongoDB, jamais dans le stockage du navigateur : le même thème est donc appliqué sur Mac, iPhone et les autres appareils connectés au Studio.
 
 Par défaut, 5 codes incorrects sur une fenêtre de 15 minutes bloquent les nouveaux essais pendant 15 minutes. L’historique affiché dans **Réglages** est conservé 90 jours : il contient seulement la date, le type d’appareil, le navigateur et le résultat. Le code saisi et l’adresse IP brute ne sont jamais enregistrés.
 

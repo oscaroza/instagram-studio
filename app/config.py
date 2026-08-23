@@ -33,7 +33,7 @@ class Settings:
     studio_idle_minutes: int = int(
         os.getenv(
             "STUDIO_IDLE_MINUTES",
-            "5",
+            "10",
         )
     )
 

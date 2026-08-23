@@ -75,6 +75,11 @@ from app.services.passkeys import (
     verify_authentication,
     verify_registration,
 )
+from app.services.preferences import (
+    get_appearance_preferences,
+    reset_appearance_preferences,
+    save_appearance_preferences,
+)
 from app.security import (
     SESSION_COOKIE,
     create_session_token,
@@ -188,6 +193,45 @@ async def v2_status():
         "push_ready": push_configured(),
         "trial_reels_enabled": settings.enable_trial_reels,
     }
+
+
+@router.get("/preferences/appearance")
+async def get_appearance(request: Request):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour charger la personnalisation.", 401)
+    try:
+        appearance = await asyncio.to_thread(get_appearance_preferences)
+    except Exception:
+        return api_error("Personnalisation temporairement indisponible.", 503)
+    return {"ok": True, "appearance": appearance}
+
+
+@router.put("/preferences/appearance")
+async def update_appearance(request: Request, payload: dict):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour modifier la personnalisation.", 401)
+    try:
+        appearance = await asyncio.to_thread(save_appearance_preferences, payload)
+    except ValueError as exc:
+        return api_error(str(exc))
+    except RuntimeError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Enregistrement de la personnalisation impossible.", 503)
+    return {"ok": True, "appearance": appearance}
+
+
+@router.delete("/preferences/appearance")
+async def delete_appearance(request: Request):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour réinitialiser la personnalisation.", 401)
+    try:
+        appearance = await asyncio.to_thread(reset_appearance_preferences)
+    except RuntimeError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Réinitialisation de la personnalisation impossible.", 503)
+    return {"ok": True, "appearance": appearance}
 
 
 @router.get("/security/login-history")

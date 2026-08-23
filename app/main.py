@@ -79,6 +79,7 @@ from app.services.login_security import (
     record_login_success,
 )
 from app.services.passkeys import passkey_available
+from app.services.preferences import DEFAULT_APPEARANCE, get_appearance_preferences
 from app.security import (
     SESSION_COOKIE,
     access_code_matches,
@@ -421,6 +422,11 @@ async def home(
     request: Request
 ):
     instagram_stored = await stored_credentials_exist()
+    try:
+        appearance = await asyncio.to_thread(get_appearance_preferences)
+    except Exception:
+        # Une préférence d’apparence ne doit jamais empêcher le Studio de charger.
+        appearance = dict(DEFAULT_APPEARANCE)
     return templates.TemplateResponse(
         request=request,
         name="index.html",
@@ -458,6 +464,7 @@ async def home(
             "trial_reels_enabled": settings.enable_trial_reels,
             "mongodb_ready": database_configured(),
             "cloudinary_ready": cloudinary_configured(),
+            "appearance": appearance,
         },
     )
 

@@ -69,6 +69,7 @@ def ensure_indexes() -> None:
     db.passkey_challenges.create_index("expires_at", expireAfterSeconds=0)
     db.analytics_assistant_messages.create_index("created_at")
     db.analytics_assistant_messages.create_index("expires_at", expireAfterSeconds=0)
+    db.studio_preferences.create_index("updated_at")
 
 
 def object_id(value: str) -> ObjectId:

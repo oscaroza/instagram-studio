@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#0b0c10">
+  <meta name="theme-color" content="{{ appearance.background }}">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="IG Studio">
@@ -11,9 +11,9 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=19">
+  <link rel="stylesheet" href="/static/styles.css?v=20">
 </head>
-<body data-session-idle-seconds="{{ session_idle_seconds }}">
+<body data-session-idle-seconds="{{ session_idle_seconds }}" data-density="{{ appearance.density }}" style="--bg:{{ appearance.background }};--surface:{{ appearance.surface }};--text:{{ appearance.text }};--accent:{{ appearance.accent }};--accent2:{{ appearance.accent }};--accent-contrast:{{ appearance.accent_text }};--card-radius:{{ appearance.radius }}px">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
     <span><strong>⚠️ Session déconnectée</strong><small>Après {{ session_idle_seconds // 60 }} minutes d’inactivité, actualise la page pour te reconnecter.</small></span>
     <button id="refreshSessionBtn" class="secondary" type="button">Actualiser</button>
@@ -39,6 +39,7 @@
       <button class="tab" data-tab="stats">Stats</button>
       <button class="tab" data-tab="library">Bibliothèque</button>
       <button class="tab" data-tab="notifications">Notifications</button>
+      <button class="tab" data-tab="customize">Personnaliser</button>
       <button class="tab" data-tab="settings">Réglages</button>
     </nav>
 
@@ -242,21 +243,24 @@
           <div id="statsBestTimes" class="stats-bars"><p class="muted">Aucune donnée.</p></div>
         </div>
       </div>
-      <div class="card result-card">
-        <div class="row-between">
-          <div>
-            <h2>Assistant Groq</h2>
-            <p class="muted">Un conseiller personnel pour transformer tes statistiques en actions concrètes.</p>
-          </div>
-          <button id="analyzeStatsBtn" class="primary" type="button">Analyser mes performances</button>
-        </div>
+      <details class="card collapsible-card result-card" open>
+        <summary class="collapsible-summary">
+          <span><strong>Assistant Groq</strong><small>Un conseiller personnel pour transformer tes statistiques en actions concrètes.</small></span>
+          <span class="collapsible-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="collapsible-content">
+        <button id="analyzeStatsBtn" class="primary assistant-analysis-button" type="button">Analyser mes performances</button>
         <p class="muted small">Groq reçoit uniquement les chiffres agrégés et les caractéristiques anonymisées des hooks — jamais les textes complets, vidéos, tokens, URL ou nom d’utilisateur.</p>
         <div id="statsAssistantNotice" class="notice hidden"></div>
         <p id="statsAssistantMeta" class="muted small"></p>
         <div id="statsAssistantReport" class="assistant-report"><p class="muted">Synchronise au moins 3 publications, puis lance l’analyse.</p></div>
-        <div class="assistant-chat">
-          <div class="row-between assistant-chat-header">
-            <div><h3>Discuter avec ton assistant</h3><p class="muted small">Pose une question précise sur tes vues, hooks, formats ou horaires.</p></div>
+        <details class="assistant-chat nested-collapsible" open>
+          <summary class="collapsible-summary compact-summary">
+            <span><strong>Discuter avec ton assistant</strong><small>Pose une question précise sur tes vues, hooks, formats ou horaires.</small></span>
+            <span class="collapsible-chevron" aria-hidden="true"></span>
+          </summary>
+          <div class="nested-collapsible-content">
+          <div class="assistant-chat-toolbar">
             <button id="clearAssistantChat" class="ghost" type="button">Effacer</button>
           </div>
           <div id="assistantChatMessages" class="assistant-chat-messages"><p class="muted">Aucune conversation.</p></div>
@@ -267,14 +271,17 @@
           </form>
           <div id="assistantChatNotice" class="notice hidden"></div>
           <p class="muted small">La question actuelle et les statistiques anonymisées sont envoyées à Groq. Les anciennes conversations restent dans MongoDB pendant 90 jours mais ne sont pas renvoyées à Groq.</p>
-        </div>
-      </div>
-      <div class="card result-card">
-        <div class="row-between stats-history-header">
-          <div>
-            <h2>Hooks et historique des performances</h2>
-            <p class="muted">Les hooks sont comparés avec les statistiques actuelles et l’évolution depuis le relevé précédent.</p>
           </div>
+        </details>
+        </div>
+      </details>
+      <details class="card collapsible-card result-card" open>
+        <summary class="collapsible-summary">
+          <span><strong>Hooks et historique des performances</strong><small>Compare les hooks, leurs résultats actuels et leur évolution.</small></span>
+          <span class="collapsible-chevron" aria-hidden="true"></span>
+        </summary>
+        <div class="collapsible-content">
+        <div class="stats-history-toolbar">
           <label class="stats-sort-label">Trier par
             <select id="statsSort">
               <option value="views_desc">Plus de vues</option>
@@ -291,7 +298,8 @@
           </label>
         </div>
         <div id="statsPosts" class="stats-posts"><p class="muted">Aucune publication synchronisée.</p></div>
-      </div>
+        </div>
+      </details>
     </section>
 
     <section id="library" class="panel">
@@ -368,6 +376,55 @@
       </div>
     </section>
 
+    <section id="customize" class="panel">
+      <div class="card customize-hero">
+        <span class="eyebrow">TON STUDIO, TON STYLE</span>
+        <h2>Personnaliser l’interface</h2>
+        <p class="muted">Le thème est enregistré dans MongoDB et se retrouve automatiquement sur tous tes appareils.</p>
+        <div id="appearanceNotice" class="notice hidden"></div>
+      </div>
+      <div class="grid two result-card customize-grid">
+        <div class="card">
+          <h2>Palettes</h2>
+          <p class="muted small">Choisis une base, puis ajuste chaque couleur si tu veux.</p>
+          <div class="appearance-presets">
+            <button class="appearance-preset" type="button" data-appearance-preset="studio"><span class="preset-swatches"><i style="--swatch:#08090d"></i><i style="--swatch:#11131a"></i><i style="--swatch:#9f7aea"></i></span><strong>Studio violet</strong></button>
+            <button class="appearance-preset" type="button" data-appearance-preset="ocean"><span class="preset-swatches"><i style="--swatch:#06131d"></i><i style="--swatch:#0d2331"></i><i style="--swatch:#28b8d8"></i></span><strong>Océan</strong></button>
+            <button class="appearance-preset" type="button" data-appearance-preset="sunset"><span class="preset-swatches"><i style="--swatch:#160b12"></i><i style="--swatch:#28131d"></i><i style="--swatch:#ff6b7a"></i></span><strong>Sunset</strong></button>
+            <button class="appearance-preset" type="button" data-appearance-preset="graphite"><span class="preset-swatches"><i style="--swatch:#090a0c"></i><i style="--swatch:#181a1f"></i><i style="--swatch:#d9dde7"></i></span><strong>Graphite</strong></button>
+          </div>
+        </div>
+        <div class="card appearance-preview-card">
+          <h2>Aperçu</h2>
+          <div class="appearance-preview">
+            <span class="pill ok">Instagram ✓</span>
+            <h3>Ta prochaine publication</h3>
+            <p>Une interface qui te ressemble sur Mac comme sur iPhone.</p>
+            <button class="primary" type="button" tabindex="-1">Bouton principal</button>
+          </div>
+        </div>
+      </div>
+      <div class="card result-card">
+        <h2>Réglages du thème</h2>
+        <div class="appearance-controls">
+          <label>Couleur principale<input id="appearanceAccent" type="color" value="{{ appearance.accent }}"></label>
+          <label>Arrière-plan<input id="appearanceBackground" type="color" value="{{ appearance.background }}"></label>
+          <label>Cartes<input id="appearanceSurface" type="color" value="{{ appearance.surface }}"></label>
+          <label>Texte<input id="appearanceText" type="color" value="{{ appearance.text }}"></label>
+          <label>Densité
+            <select id="appearanceDensity"><option value="comfortable" {{ 'selected' if appearance.density == 'comfortable' }}>Confortable</option><option value="compact" {{ 'selected' if appearance.density == 'compact' }}>Compacte</option></select>
+          </label>
+          <label>Arrondi des cartes <output id="appearanceRadiusValue">{{ appearance.radius }} px</output>
+            <input id="appearanceRadius" type="range" min="10" max="24" step="1" value="{{ appearance.radius }}">
+          </label>
+        </div>
+        <div class="actions appearance-actions">
+          <button id="resetAppearanceBtn" class="ghost" type="button">Réinitialiser</button>
+          <button id="saveAppearanceBtn" class="primary" type="button">Enregistrer sur tous mes appareils</button>
+        </div>
+      </div>
+    </section>
+
     <section id="settings" class="panel">
       <div class="card">
         <h2>État du Studio</h2>
@@ -441,6 +498,6 @@
   </main>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=22"></script>
 </body>
 </html>
