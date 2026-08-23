@@ -27,8 +27,9 @@ class FakeCollection:
 
 
 class FakeDatabase:
-    def __init__(self, media):
+    def __init__(self, media, snapshots=None):
         self.instagram_media = FakeCollection(media)
+        self.instagram_insight_snapshots = FakeCollection(snapshots or [])
         self.analytics_state = FakeCollection([])
         self.analytics_reports = FakeCollection([])
 
@@ -121,6 +122,11 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     ]
     monkeypatch.setattr(analytics, "database_configured", lambda: True)
     monkeypatch.setattr(analytics, "database", lambda: FakeDatabase(documents))
+    monkeypatch.setattr(
+        analytics,
+        "utc_now",
+        lambda: datetime(2026, 8, 23, 12, tzinfo=timezone.utc),
+    )
 
     dashboard = analytics.build_analytics_dashboard("UTC")
 
@@ -132,6 +138,66 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     assert dashboard["top_posts"][0]["delta_views"] == 300
     assert dashboard["top_posts"][0]["likes"] == 50
     assert dashboard["automatic_findings"]
+
+
+def test_dashboard_compares_periods_and_builds_real_growth_series(monkeypatch):
+    documents = [
+        {
+            "_id": "current-media",
+            "title": "Publication actuelle",
+            "media_kind": "reel",
+            "timestamp": datetime(2026, 8, 20, 12, tzinfo=timezone.utc),
+            "latest_metrics": {"views": 1000, "reach": 800, "total_interactions": 80},
+        },
+        {
+            "_id": "previous-media",
+            "title": "Publication précédente",
+            "media_kind": "photo",
+            "timestamp": datetime(2026, 8, 12, 12, tzinfo=timezone.utc),
+            "latest_metrics": {"views": 500, "reach": 400, "total_interactions": 40},
+        },
+    ]
+    snapshots = [
+        {
+            "media_id": "current-media",
+            "captured_at": datetime(2026, 8, 15, 10, tzinfo=timezone.utc),
+            "metrics": {"views": 500, "reach": 400, "total_interactions": 40},
+        },
+        {
+            "media_id": "current-media",
+            "captured_at": datetime(2026, 8, 20, 10, tzinfo=timezone.utc),
+            "metrics": {"views": 900, "reach": 700, "total_interactions": 70},
+        },
+        {
+            "media_id": "previous-media",
+            "captured_at": datetime(2026, 8, 20, 10, tzinfo=timezone.utc),
+            "metrics": {"views": 200, "reach": 150, "total_interactions": 15},
+        },
+        {
+            "media_id": "current-media",
+            "captured_at": datetime(2026, 8, 22, 10, tzinfo=timezone.utc),
+            "metrics": {"views": 1000, "reach": 800, "total_interactions": 80},
+        },
+    ]
+    monkeypatch.setattr(analytics, "database_configured", lambda: True)
+    monkeypatch.setattr(analytics, "database", lambda: FakeDatabase(documents, snapshots))
+    monkeypatch.setattr(
+        analytics,
+        "utc_now",
+        lambda: datetime(2026, 8, 23, 12, tzinfo=timezone.utc),
+    )
+
+    dashboard = analytics.build_analytics_dashboard("UTC", period_days=7)
+
+    comparison = dashboard["period_comparison"]
+    assert comparison["days"] == 7
+    assert comparison["current"]["media_count"] == 1
+    assert comparison["previous"]["media_count"] == 1
+    assert comparison["changes"]["views"] == 100
+    assert len(dashboard["growth_series"]) == 3
+    assert dashboard["growth_series"][0]["views"] == 500
+    assert dashboard["growth_series"][-1]["views"] == 1200
+    assert dashboard["growth_series"][-1]["delta_views"] == 700
 
 
 def test_groq_analysis_never_sends_caption_or_complete_hook(monkeypatch):

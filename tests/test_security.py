@@ -488,6 +488,9 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'id="statsAssistantReport"' in page.text
     assert 'id="notifyLogin"' in page.text
     assert 'id="statsSort"' in page.text
+    assert 'id="statsPeriod"' in page.text
+    assert 'id="statsComparison"' in page.text
+    assert 'id="statsGrowthChart"' in page.text
     assert 'data-tab="settings"' in page.text
     assert 'id="settings"' in page.text
 

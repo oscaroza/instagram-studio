@@ -212,11 +212,14 @@ async def instagram_token_health():
 
 
 @router.get("/analytics/dashboard")
-async def analytics_dashboard():
+async def analytics_dashboard(period_days: int = 30):
     if not database_configured():
         return api_error("MONGODB_URI n’est pas configurée.", 503)
     try:
-        dashboard = await asyncio.to_thread(build_analytics_dashboard)
+        dashboard = await asyncio.to_thread(
+            build_analytics_dashboard,
+            period_days=period_days,
+        )
     except Exception:
         return api_error("Dashboard MongoDB indisponible.", 503)
     return {"ok": True, **dashboard}
@@ -234,11 +237,14 @@ async def synchronize_analytics():
 
 
 @router.post("/analytics/assistant")
-async def run_analytics_assistant():
+async def run_analytics_assistant(period_days: int = 30):
     if not database_configured():
         return api_error("MONGODB_URI n’est pas configurée.", 503)
     try:
-        dashboard = await asyncio.to_thread(build_analytics_dashboard)
+        dashboard = await asyncio.to_thread(
+            build_analytics_dashboard,
+            period_days=period_days,
+        )
         summary = dashboard.get("summary") or {}
         if int(summary.get("media_count", 0)) < 3:
             return api_error(

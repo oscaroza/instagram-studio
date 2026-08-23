@@ -702,6 +702,68 @@ $('calendarToday').addEventListener('click',()=>{calendarCursor=new Date();if(ca
 document.querySelectorAll('[data-calendar-view]').forEach(button=>button.addEventListener('click',()=>{calendarView=button.dataset.calendarView;if(calendarView!=='week')calendarCursor.setDate(1);try{localStorage.setItem('igstudio.calendarView',calendarView);}catch{}loadCalendar();}));
 
 function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
+function statsPeriodValue(){return Number($('statsPeriod').value)||30;}
+function statsDate(value){
+  const date=new Date(value||'');
+  return Number.isNaN(date.getTime())?'—':date.toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'});
+}
+function renderPeriodComparison(comparison={}){
+  const current=comparison.current||{};const previous=comparison.previous||{};const changes=comparison.changes||{};
+  $('statsPeriodDates').textContent=`${statsDate(current.start)} – ${statsDate(current.end)} comparé à ${statsDate(previous.start)} – ${statsDate(previous.end)}`;
+  const root=$('statsComparison');root.innerHTML='';
+  const metrics=[
+    ['Publications','media_count',value=>formatStat(value)],
+    ['Vues','views',value=>formatStat(value)],
+    ['Portée','reach',value=>formatStat(value)],
+    ['Engagement','engagement_rate',value=>`${Number(value||0).toFixed(1)} %`]
+  ];
+  for(const [label,key,formatter] of metrics){
+    const card=document.createElement('article');card.className='stats-comparison-item';
+    card.innerHTML='<span class="label"></span><strong class="current"></strong><small class="previous"></small><span class="change"></span>';
+    card.querySelector('.label').textContent=label;
+    card.querySelector('.current').textContent=formatter(current[key]);
+    card.querySelector('.previous').textContent=`Avant : ${formatter(previous[key])}`;
+    const change=card.querySelector('.change');const value=changes[key];
+    if(value===null||value===undefined){change.textContent='Pas de base comparable';change.classList.add('neutral');}
+    else if(Math.abs(Number(value))<0.05){change.textContent='Stable';change.classList.add('neutral');}
+    else{const rising=Number(value)>0;change.textContent=`${rising?'↑':'↓'} ${Math.abs(Number(value)).toFixed(1)} %`;change.classList.add(rising?'up':'down');}
+    root.appendChild(card);
+  }
+}
+function svgNode(name,attributes={}){
+  const node=document.createElementNS('http://www.w3.org/2000/svg',name);
+  for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));
+  return node;
+}
+function renderGrowthChart(series=[]){
+  const root=$('statsGrowthChart');root.innerHTML='';const meta=$('statsGrowthMeta');meta.textContent='';
+  if(!Array.isArray(series)||series.length<2){
+    const empty=document.createElement('p');empty.className='muted';empty.textContent=series.length?'Un premier relevé existe. Synchronise de nouveau plus tard pour tracer l’évolution.':'Aucun relevé historique enregistré pour cette période.';root.appendChild(empty);return;
+  }
+  const width=720,height=260,pad={left:62,right:20,top:20,bottom:42};
+  const plotWidth=width-pad.left-pad.right,plotHeight=height-pad.top-pad.bottom;
+  const maximum=Math.max(...series.flatMap(item=>[Number(item.views)||0,Number(item.reach)||0]),1);
+  const x=index=>pad.left+index/(series.length-1)*plotWidth;
+  const y=value=>pad.top+plotHeight-(Number(value)||0)/maximum*plotHeight;
+  const svg=svgNode('svg',{viewBox:`0 0 ${width} ${height}`,role:'img','aria-label':'Évolution des vues et de la portée entre les synchronisations'});
+  for(let step=0;step<=4;step++){
+    const gridY=pad.top+step/4*plotHeight;
+    svg.appendChild(svgNode('line',{x1:pad.left,y1:gridY,x2:width-pad.right,y2:gridY,class:'stats-chart-grid'}));
+    const label=svgNode('text',{x:pad.left-10,y:gridY+4,'text-anchor':'end',class:'stats-chart-axis'});label.textContent=formatStat(maximum*(1-step/4));svg.appendChild(label);
+  }
+  for(const [key,className] of [['views','views'],['reach','reach']]){
+    const points=series.map((item,index)=>`${x(index)},${y(item[key])}`).join(' ');
+    svg.appendChild(svgNode('polyline',{points,class:`stats-chart-line ${className}`}));
+    if(series.length<=20){
+      series.forEach((item,index)=>{const circle=svgNode('circle',{cx:x(index),cy:y(item[key]),r:4,class:`stats-chart-point ${className}`});const title=svgNode('title');title.textContent=`${statsDate(item.captured_at)} : ${formatStat(item[key])}`;circle.appendChild(title);svg.appendChild(circle);});
+    }
+  }
+  const firstLabel=svgNode('text',{x:pad.left,y:height-12,'text-anchor':'start',class:'stats-chart-axis'});firstLabel.textContent=statsDate(series[0].captured_at);svg.appendChild(firstLabel);
+  const lastLabel=svgNode('text',{x:width-pad.right,y:height-12,'text-anchor':'end',class:'stats-chart-axis'});lastLabel.textContent=statsDate(series[series.length-1].captured_at);svg.appendChild(lastLabel);
+  root.appendChild(svg);
+  const last=series[series.length-1];const signed=value=>`${Number(value)>0?'+':''}${formatStat(value)}`;
+  meta.textContent=`${series.length} point(s) de relevé • ${signed(last.delta_views)} vues • ${signed(last.delta_reach)} de portée depuis le premier point`;
+}
 function analyticsPostLabel(item){return item.hook||item.title||'Sans hook enregistré';}
 function sortedAnalyticsPosts(){
   const items=[...analyticsPosts];
@@ -769,6 +831,8 @@ function renderAnalytics(data){
   const sync=data.sync||{};
   $('statsSyncMeta').textContent=sync.last_synced_at?`Dernier relevé : ${new Date(sync.last_synced_at).toLocaleString('fr-FR')} • ${sync.metrics_updated||0} publication(s) mise(s) à jour`:'Aucune synchronisation enregistrée.';
   if(sync.permission_required&&sync.last_error)setNotice('statsNotice',sync.last_error,'error');
+  renderPeriodComparison(data.period_comparison||{});
+  renderGrowthChart(data.growth_series||[]);
 
   const findings=$('statsFindings');findings.innerHTML='';
   for(const text of data.automatic_findings||[]){const item=document.createElement('p');item.textContent=text;findings.appendChild(item);}
@@ -790,7 +854,7 @@ function renderAnalytics(data){
 }
 async function loadAnalytics(){
   hideNotice('statsNotice');
-  try{const data=await api('/api/analytics/dashboard');renderAnalytics(data);}
+  try{const data=await api(`/api/analytics/dashboard?period_days=${statsPeriodValue()}`);renderAnalytics(data);}
   catch(err){setNotice('statsNotice',err.message,'error');}
 }
 $('syncStatsBtn').addEventListener('click',async()=>{
@@ -808,13 +872,15 @@ $('analyzeStatsBtn').addEventListener('click',async()=>{
   if(!confirm('Envoyer à Groq uniquement les chiffres agrégés et caractéristiques anonymisées des hooks pour générer ton analyse ?'))return;
   const button=$('analyzeStatsBtn');button.disabled=true;button.textContent='Analyse…';hideNotice('statsAssistantNotice');
   try{
-    const data=await api('/api/analytics/assistant',{method:'POST'});
+    const data=await api(`/api/analytics/assistant?period_days=${statsPeriodValue()}`,{method:'POST'});
     renderAssistantReport(data.report,new Date().toISOString());
     setNotice('statsAssistantNotice',`Analyse terminée avec ${data.model}.`,'success');
   }catch(err){setNotice('statsAssistantNotice',err.message,'error');}
   finally{button.disabled=false;button.textContent='Analyser mes performances';}
 });
 $('statsSort').addEventListener('change',renderAnalyticsPosts);
+$('statsPeriod').addEventListener('change',()=>{try{localStorage.setItem('igstudio.statsPeriod',$('statsPeriod').value);}catch{}loadAnalytics();});
+try{const savedPeriod=localStorage.getItem('igstudio.statsPeriod');if(['7','30','90'].includes(savedPeriod))$('statsPeriod').value=savedPeriod;}catch{}
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
 function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked,instagram_token:$('notifyToken').checked,security_lockout:$('notifySecurityLockout').checked};}

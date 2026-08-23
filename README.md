@@ -14,6 +14,7 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - notifications Web Push PWA : 30 minutes avant, succès, échec, workflow musique, connexion et santé du token Instagram ;
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;
+- dashboard statistique avec comparaison sur 7, 30 ou 90 jours et courbe d’évolution fondée sur les relevés MongoDB ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement ;
 - vérification avant envoi et protection de 15 minutes contre une double publication identique.
 

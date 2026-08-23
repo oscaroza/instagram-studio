@@ -225,6 +225,12 @@ async def analyze_instagram_performance(
 
     compact_data = {
         "summary": dashboard.get("summary") or {},
+        "period_comparison": dashboard.get("period_comparison") or {},
+        "growth": {
+            "points": len(dashboard.get("growth_series") or []),
+            "first": (dashboard.get("growth_series") or [{}])[0],
+            "last": (dashboard.get("growth_series") or [{}])[-1],
+        },
         "best_times": (dashboard.get("best_times") or [])[:8],
         "top_posts": [
             {
@@ -248,7 +254,7 @@ Analyse uniquement les données agrégées fournies. Retourne UNIQUEMENT un obje
   "experiments": ["2 ou 3 tests simples pour les prochaines publications"],
   "cautions": ["limites importantes des données"]
 }
-Ne présente jamais une corrélation comme une causalité. Si l'échantillon est petit ou les métriques manquent, dis-le clairement. N'invente aucun chiffre ni contenu de publication. Reste concis : une phrase courte par élément de liste."""
+Utilise la comparaison de période et la croissance seulement quand elles contiennent assez de relevés. Ne présente jamais une corrélation comme une causalité. Si l'échantillon est petit ou les métriques manquent, dis-le clairement. N'invente aucun chiffre ni contenu de publication. Reste concis : une phrase courte par élément de liste."""
     payload = {
         "model": settings.cerebras_model,
         "messages": [

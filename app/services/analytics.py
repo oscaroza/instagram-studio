@@ -1,6 +1,6 @@
 import asyncio
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -36,6 +36,7 @@ MEDIA_FIELDS = (
     "thumbnail_url,username"
 )
 _sync_lock = asyncio.Lock()
+PERIOD_DAYS_OPTIONS = {7, 30, 90}
 
 
 def _safe_meta_message(response: httpx.Response, access_token: str) -> str:
@@ -370,11 +371,131 @@ def _iso(value: Any) -> str | None:
     return value.astimezone(timezone.utc).isoformat() if isinstance(value, datetime) else None
 
 
-def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, Any]:
+def _period_summary(samples: list[dict[str, Any]]) -> dict[str, int | float]:
+    totals = {"views": 0.0, "reach": 0.0, "interactions": 0.0}
+    for sample in samples:
+        for key in totals:
+            totals[key] += float(sample.get(key, 0) or 0)
+    denominator = totals["reach"] or totals["views"]
+    return {
+        "media_count": len(samples),
+        "views": int(totals["views"]),
+        "reach": int(totals["reach"]),
+        "interactions": int(totals["interactions"]),
+        "engagement_rate": totals["interactions"] / denominator * 100 if denominator else 0.0,
+    }
+
+
+def _change_percent(current: float, previous: float) -> float | None:
+    if not previous:
+        return 0.0 if not current else None
+    return (current - previous) / abs(previous) * 100
+
+
+def _period_comparison(
+    samples: list[dict[str, Any]],
+    period_days: int,
+    now: datetime,
+) -> dict[str, Any]:
+    current_start = now - timedelta(days=period_days)
+    previous_start = current_start - timedelta(days=period_days)
+    current_samples = [
+        sample
+        for sample in samples
+        if isinstance(sample.get("timestamp"), datetime)
+        and current_start <= sample["timestamp"] <= now
+    ]
+    previous_samples = [
+        sample
+        for sample in samples
+        if isinstance(sample.get("timestamp"), datetime)
+        and previous_start <= sample["timestamp"] < current_start
+    ]
+    current = _period_summary(current_samples)
+    previous = _period_summary(previous_samples)
+    metric_names = ("media_count", "views", "reach", "interactions", "engagement_rate")
+    return {
+        "days": period_days,
+        "current": {
+            "start": _iso(current_start),
+            "end": _iso(now),
+            **current,
+        },
+        "previous": {
+            "start": _iso(previous_start),
+            "end": _iso(current_start),
+            **previous,
+        },
+        "changes": {
+            name: _change_percent(float(current[name]), float(previous[name]))
+            for name in metric_names
+        },
+    }
+
+
+def _snapshot_growth_series(
+    snapshots: list[dict[str, Any]],
+    period_days: int,
+    now: datetime,
+    local_timezone: ZoneInfo,
+) -> list[dict[str, Any]]:
+    cutoff = now - timedelta(days=period_days)
+    latest_by_media: dict[str, dict[str, float]] = {}
+    daily_points: dict[str, dict[str, Any]] = {}
+    baseline_added = False
+    has_pre_cutoff_state = False
+
+    def totals() -> dict[str, int]:
+        return {
+            name: int(sum(values[name] for values in latest_by_media.values()))
+            for name in ("views", "reach", "interactions")
+        }
+
+    for snapshot in snapshots:
+        captured_at = snapshot.get("captured_at")
+        metrics = snapshot.get("metrics")
+        if not isinstance(captured_at, datetime) or not isinstance(metrics, dict):
+            continue
+        captured_at = captured_at.astimezone(timezone.utc)
+        if captured_at > now:
+            continue
+        if captured_at >= cutoff and has_pre_cutoff_state and not baseline_added:
+            daily_points["baseline"] = {
+                "captured_at": _iso(cutoff),
+                **totals(),
+            }
+            baseline_added = True
+        latest_by_media[str(snapshot.get("media_id") or "unknown")] = _post_values(
+            {"latest_metrics": metrics}
+        )
+        if captured_at < cutoff:
+            has_pre_cutoff_state = True
+            continue
+        day_key = captured_at.astimezone(local_timezone).date().isoformat()
+        daily_points[day_key] = {
+            "captured_at": _iso(captured_at),
+            **totals(),
+        }
+
+    points = sorted(daily_points.values(), key=lambda item: item["captured_at"] or "")
+    if points:
+        first = points[0]
+        for point in points:
+            point["delta_views"] = point["views"] - first["views"]
+            point["delta_reach"] = point["reach"] - first["reach"]
+            point["delta_interactions"] = point["interactions"] - first["interactions"]
+    return points
+
+
+def build_analytics_dashboard(
+    timezone_name: str = "Europe/Paris",
+    period_days: int = 30,
+) -> dict[str, Any]:
     if not database_configured():
         raise AnalyticsError("MONGODB_URI est nécessaire pour afficher les statistiques.")
     db = database()
     documents = list(db.instagram_media.find({}).sort("timestamp", -1).limit(500))
+    period_days = period_days if period_days in PERIOD_DAYS_OPTIONS else 30
     try:
         local_timezone = ZoneInfo(timezone_name)
     except ZoneInfoNotFoundError:
@@ -385,6 +506,7 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
     kind_performance: defaultdict[str, list[dict[str, float]]] = defaultdict(list)
     hook_performance: defaultdict[str, list[dict[str, float]]] = defaultdict(list)
     time_groups: defaultdict[tuple[int, int], list[dict[str, float]]] = defaultdict(list)
+    period_samples: list[dict[str, Any]] = []
     posts: list[dict[str, Any]] = []
     for document in documents:
         values = _post_values(document)
@@ -399,6 +521,7 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
             hook_performance["court" if len(hook) <= 60 else "long"].append(values)
             hook_performance["avec_nombre" if any(char.isdigit() for char in hook) else "sans_nombre"].append(values)
         timestamp = document.get("timestamp")
+        period_samples.append({"timestamp": timestamp, **values})
         if isinstance(timestamp, datetime):
             local_date = timestamp.astimezone(local_timezone)
             time_groups[(local_date.weekday(), local_date.hour)].append(values)
@@ -488,6 +611,14 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
         )
     state = db.analytics_state.find_one({"_id": "primary"}) or {}
     report = db.analytics_reports.find_one({"_id": "latest"}) or {}
+    now = utc_now().astimezone(timezone.utc)
+    snapshot_collection = getattr(db, "instagram_insight_snapshots", None)
+    snapshots = (
+        list(snapshot_collection.find({}).sort("captured_at", -1).limit(10000))
+        if snapshot_collection is not None
+        else []
+    )
+    snapshots.reverse()
     return {
         "summary": {
             "media_count": len(documents),
@@ -502,6 +633,13 @@ def build_analytics_dashboard(timezone_name: str = "Europe/Paris") -> dict[str, 
         "best_times": best_times[:8],
         "top_posts": posts[:100],
         "automatic_findings": automatic_findings,
+        "period_comparison": _period_comparison(period_samples, period_days, now),
+        "growth_series": _snapshot_growth_series(
+            snapshots,
+            period_days,
+            now,
+            local_timezone,
+        ),
         "sync": {
             "last_synced_at": _iso(state.get("last_synced_at")),
             "media_found": int(state.get("media_found", len(documents))),

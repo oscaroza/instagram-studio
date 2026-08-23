@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=17">
+  <link rel="stylesheet" href="/static/styles.css?v=18">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -190,12 +190,21 @@
 
     <section id="stats" class="panel">
       <div class="card">
-        <div class="row-between">
+        <div class="row-between stats-dashboard-header">
           <div>
             <h2>Dashboard V3</h2>
             <p class="muted">Performances de tes anciennes publications, enregistrées dans MongoDB.</p>
           </div>
-          <button id="syncStatsBtn" class="primary" type="button">Synchroniser avec Instagram</button>
+          <div class="stats-dashboard-actions">
+            <label>Comparer sur
+              <select id="statsPeriod">
+                <option value="7">7 jours</option>
+                <option value="30" selected>30 jours</option>
+                <option value="90">90 jours</option>
+              </select>
+            </label>
+            <button id="syncStatsBtn" class="primary" type="button">Synchroniser avec Instagram</button>
+          </div>
         </div>
         <p id="statsSyncMeta" class="muted small">Aucune synchronisation enregistrée.</p>
         <div id="statsNotice" class="notice hidden"></div>
@@ -204,6 +213,21 @@
           <article><span>Vues</span><strong id="statsViews">0</strong><small>Total disponible</small></article>
           <article><span>Portée</span><strong id="statsReach">0</strong><small>Comptes touchés</small></article>
           <article><span>Engagement</span><strong id="statsEngagement">0 %</strong><small id="statsInteractions">0 interaction</small></article>
+        </div>
+      </div>
+      <div class="grid two stats-columns stats-phase-three result-card">
+        <div class="card">
+          <h2>Comparaison par période</h2>
+          <p id="statsPeriodDates" class="muted small">Période actuelle comparée à la période précédente.</p>
+          <div id="statsComparison" class="stats-comparison-grid"><p class="muted">Aucune donnée comparable.</p></div>
+          <p class="muted small stats-method-note">Les chiffres correspondent aux performances actuelles des publications sorties pendant chaque période.</p>
+        </div>
+        <div class="card">
+          <h2>Courbe d’évolution</h2>
+          <p class="muted small">Progression réelle entre les relevés enregistrés lors de tes synchronisations.</p>
+          <div class="stats-chart-legend"><span class="views">Vues</span><span class="reach">Portée</span></div>
+          <div id="statsGrowthChart" class="stats-growth-chart"><p class="muted">Il faut au moins deux relevés.</p></div>
+          <p id="statsGrowthMeta" class="muted small"></p>
         </div>
       </div>
       <div class="grid two stats-columns result-card">
@@ -390,6 +414,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=19"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>
