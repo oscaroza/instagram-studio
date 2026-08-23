@@ -171,3 +171,5 @@ def test_groq_analysis_never_sends_caption_or_complete_hook(monkeypatch):
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
     assert response_format["json_schema"]["schema"]["additionalProperties"] is False
+    assert FakeGroqClient.last_payload["reasoning_effort"] == "low"
+    assert FakeGroqClient.last_payload["max_completion_tokens"] == 4096

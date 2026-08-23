@@ -1,6 +1,9 @@
+import json
+
+import httpx
 import pytest
 
-from app.services.cerebras import CerebrasError, _extract_json
+from app.services.cerebras import CerebrasError, _extract_json, _groq_error
 
 
 def test_extract_plain_json():
@@ -24,3 +27,24 @@ def test_extract_json_repairs_trailing_commas_locally():
 def test_extract_json_rejects_non_object_content():
     with pytest.raises(CerebrasError, match="JSON valide"):
         _extract_json("aucun objet dans cette réponse")
+
+
+def test_completion_limit_error_is_short_and_does_not_trigger_a_retry():
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    response = httpx.Response(
+        400,
+        request=request,
+        content=json.dumps(
+            {
+                "error": {
+                    "code": "json_validate_failed",
+                    "failed_generation": "max completion tokens reached before generating a valid document",
+                }
+            }
+        ).encode(),
+    )
+
+    error = _groq_error(response)
+
+    assert "limite de sortie" in str(error)
+    assert "sans nouvelle tentative" in str(error)

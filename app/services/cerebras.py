@@ -57,6 +57,28 @@ def _response_format(name: str, schema: dict[str, Any]) -> dict[str, Any]:
     return {"type": "json_object"}
 
 
+def _reasoning_options() -> dict[str, str]:
+    if settings.cerebras_model in STRICT_JSON_MODELS:
+        return {"reasoning_effort": "low"}
+    return {}
+
+
+def _groq_error(response: httpx.Response) -> CerebrasError:
+    try:
+        error = (response.json() or {}).get("error") or {}
+    except ValueError:
+        error = {}
+    code = str(error.get("code") or "")
+    failed_generation = str(error.get("failed_generation") or "").lower()
+    if code == "json_validate_failed" and "max completion tokens" in failed_generation:
+        return CerebrasError(
+            "Groq n'a pas terminé le JSON avant la limite de sortie. "
+            "La requête a été arrêtée sans nouvelle tentative automatique."
+        )
+    detail = response.text.replace(settings.cerebras_api_key, "[secret redacted]")[:500]
+    return CerebrasError(f"Erreur Groq {response.status_code}: {detail}")
+
+
 def _extract_json(content: Any) -> dict[str, Any]:
     if isinstance(content, dict):
         return content
@@ -151,8 +173,9 @@ Consignes supplémentaires: {extra or 'aucune'}
             {"role": "user", "content": user_prompt},
         ],
         "temperature": 0.7,
-        "max_completion_tokens": 700,
+        "max_completion_tokens": 2048,
         "response_format": _response_format("instagram_caption", CAPTION_SCHEMA),
+        **_reasoning_options(),
     }
     headers = {
         "Authorization": f"Bearer {settings.cerebras_api_key}",
@@ -166,11 +189,7 @@ Consignes supplémentaires: {extra or 'aucune'}
             headers=headers,
         )
     if response.status_code >= 400:
-        detail = response.text.replace(
-            settings.cerebras_api_key,
-            "[secret redacted]",
-        )[:500]
-        raise CerebrasError(f"Erreur Groq {response.status_code}: {detail}")
+        raise _groq_error(response)
 
     data = response.json()
     try:
@@ -229,7 +248,7 @@ Analyse uniquement les données agrégées fournies. Retourne UNIQUEMENT un obje
   "experiments": ["2 ou 3 tests simples pour les prochaines publications"],
   "cautions": ["limites importantes des données"]
 }
-Ne présente jamais une corrélation comme une causalité. Si l'échantillon est petit ou les métriques manquent, dis-le clairement. N'invente aucun chiffre ni contenu de publication."""
+Ne présente jamais une corrélation comme une causalité. Si l'échantillon est petit ou les métriques manquent, dis-le clairement. N'invente aucun chiffre ni contenu de publication. Reste concis : une phrase courte par élément de liste."""
     payload = {
         "model": settings.cerebras_model,
         "messages": [
@@ -241,10 +260,11 @@ Ne présente jamais une corrélation comme une causalité. Si l'échantillon est
             },
         ],
         "temperature": 0.25,
-        "max_completion_tokens": 1100,
+        "max_completion_tokens": 4096,
         "response_format": _response_format(
             "instagram_performance_analysis", ANALYTICS_SCHEMA
         ),
+        **_reasoning_options(),
     }
     headers = {
         "Authorization": f"Bearer {settings.cerebras_api_key}",
@@ -257,8 +277,7 @@ Ne présente jamais une corrélation comme une causalité. Si l'échantillon est
             headers=headers,
         )
     if response.status_code >= 400:
-        detail = response.text.replace(settings.cerebras_api_key, "[secret redacted]")[:500]
-        raise CerebrasError(f"Erreur Groq {response.status_code}: {detail}")
+        raise _groq_error(response)
     try:
         content = response.json()["choices"][0]["message"]["content"]
     except (ValueError, KeyError, IndexError, TypeError) as exc:

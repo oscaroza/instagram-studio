@@ -198,6 +198,26 @@ def test_studio_sound_controls_and_chime_are_available():
     assert "igstudio.studioSoundEnabled" in script.text
 
 
+def test_music_finalization_prepares_files_for_native_share():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert 'id="instagramSharePanel"' in page.text
+    assert 'id="shareMediaBtn"' in page.text
+    assert 'id="instagramShareFallback"' in page.text
+    assert "fetchInstagramShareFiles" in script.text
+    assert "navigator.canShare({files})" in script.text
+    assert "navigator.share({files:prepared.files" in script.text
+    assert "instagram://camera" in script.text
+
+
 def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     with temporary_settings(
         studio_access_code="test-only-code",

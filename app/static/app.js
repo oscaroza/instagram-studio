@@ -11,6 +11,7 @@ let calendarCursor = new Date();
 calendarCursor.setDate(1);
 let selectedMediaItems = [];
 let analyticsPosts = [];
+let preparedInstagramShare = null;
 const SESSION_IDLE_MS = Math.max(60,Number(document.body.dataset.sessionIdleSeconds)||300) * 1000;
 let lastActivityAt = Date.now();
 let lastSessionTouchAt = 0;
@@ -166,8 +167,96 @@ function renderSelectedMedia(){
     root.appendChild(row);
   });
 }
+function clearPreparedInstagramShare(){
+  preparedInstagramShare=null;
+  $('instagramSharePanel').classList.add('hidden');
+}
+
+function shareFileName(item,index){
+  const isImage=item.media_type==='image';
+  const fallback=isImage?'photo.jpg':'video.mp4';
+  const source=(item.name||new URL(item.url,location.href).pathname.split('/').pop()||fallback).split('?')[0];
+  const safe=source.replace(/[^a-zA-Z0-9._-]+/g,'-').replace(/^-+|-+$/g,'')||fallback;
+  const hasExtension=/\.[a-zA-Z0-9]{2,5}$/.test(safe);
+  return `${String(index+1).padStart(2,'0')}-${hasExtension?safe:`${safe}.${isImage?'jpg':'mp4'}`}`;
+}
+async function copyInstagramCaption(caption,noticeId='actionMessage'){
+  try{
+    await navigator.clipboard.writeText(caption||'');
+    return true;
+  }catch{
+    if(noticeId)setNotice(noticeId,'Les médias sont prêts, mais la copie automatique a été bloquée. Utilise « Copier le texte » avant d’ouvrir Instagram.','error');
+    return false;
+  }
+}
+async function fetchInstagramShareFiles(items,noticeId='actionMessage'){
+  const files=[];
+  for(let index=0;index<items.length;index++){
+    const item=items[index];
+    if(noticeId)setNotice(noticeId,`Préparation du média ${index+1}/${items.length}…`);
+    const response=await fetch(item.url,{credentials:new URL(item.url,location.href).origin===location.origin?'same-origin':'omit'});
+    if(!response.ok)throw new Error(`Impossible de préparer le média ${index+1}.`);
+    const blob=await response.blob();
+    const type=item.media_type==='image'?'image/jpeg':(blob.type&&blob.type!=='application/octet-stream'?blob.type:'video/mp4');
+    files.push(new File([blob],shareFileName(item,index),{type,lastModified:Date.now()}));
+  }
+  return files;
+}
+function canNativeShareFiles(files){
+  if(!files.length||!navigator.share)return false;
+  try{return !navigator.canShare||navigator.canShare({files});}catch{return false;}
+}
+function renderInstagramSharePanel(payload,files=[],preparationError='',captionCopied=false){
+  preparedInstagramShare={payload,files,captionCopied};
+  const panel=$('instagramSharePanel'),preview=$('instagramSharePreview'),fallback=$('instagramShareFallback');
+  preview.innerHTML='';fallback.innerHTML='';
+  for(const [index,item] of (payload.media_items||[]).entries()){
+    const media=document.createElement(item.media_type==='image'?'img':'video');
+    media.src=item.thumbnail_url||item.url;media.alt=`Média ${index+1}`;if(media.tagName==='VIDEO')media.muted=true;
+    const figure=document.createElement('figure');figure.innerHTML='<span></span>';figure.querySelector('span').textContent=index+1;figure.prepend(media);preview.appendChild(figure);
+    const link=document.createElement('a');link.className='ghost';link.href=item.url;link.target='_blank';link.rel='noopener';link.textContent=`Ouvrir / enregistrer ${item.media_type==='image'?'la photo':'la vidéo'} ${index+1}`;fallback.appendChild(link);
+  }
+  const count=(payload.media_items||[]).length;
+  $('instagramShareTitle').textContent=`${count} média${count>1?'s':''} prêt${count>1?'s':''} dans le bon ordre`;
+  const canShare=canNativeShareFiles(files);
+  $('shareMediaBtn').classList.toggle('hidden',!canShare);
+  $('shareMediaBtn').textContent=`Partager ${count>1?'les médias':'le média'} vers Instagram`;
+  $('instagramShareHelp').textContent=preparationError
+    ?`${preparationError} Utilise les boutons de secours ci-dessous.`
+    :canShare
+      ?`Appuie ci-dessous, puis choisis Instagram dans le menu de l’iPhone. ${captionCopied?'La légende est déjà copiée.':'Utilise aussi « Copier le texte » pour la légende.'}`
+      :'Le partage groupé n’est pas disponible sur cet appareil. Enregistre les médias ci-dessous dans l’ordre, puis ouvre Instagram.';
+  panel.classList.remove('hidden');
+  panel.scrollIntoView({behavior:'smooth',block:'center'});
+}
+async function prepareInstagramFinalization(payload,noticeId='actionMessage'){
+  preparedInstagramShare=null;
+  const copied=await copyInstagramCaption(payload.caption||'',noticeId);
+  try{
+    const files=await fetchInstagramShareFiles(payload.media_items||[],noticeId);
+    renderInstagramSharePanel(payload,files,'',copied);
+    if(noticeId)setNotice(noticeId,`Brouillon Studio enregistré • médias prêts${copied?' • texte copié':''}.`,'success');
+  }catch(error){
+    renderInstagramSharePanel(payload,[],error.message,copied);
+    if(noticeId)setNotice(noticeId,`${error.message} Les liens de secours restent disponibles.`,'error');
+  }
+}
+$('shareMediaBtn').addEventListener('click',async()=>{
+  const prepared=preparedInstagramShare;if(!prepared?.files?.length)return;
+  try{
+    await navigator.share({files:prepared.files,title:prepared.payload.title||'Instagram Studio'});
+    setNotice('actionMessage','Médias envoyés au menu de partage. Dans Instagram, ajoute la musique puis colle la légende.','success');
+  }catch(error){
+    if(error.name!=='AbortError')setNotice('actionMessage','Le partage groupé a été refusé. Utilise les boutons de secours affichés sous les médias.','error');
+  }
+});
+$('copyPreparedCaptionBtn').addEventListener('click',async()=>{
+  if(await copyInstagramCaption(preparedInstagramShare?.payload?.caption||'',null))setNotice('actionMessage','Texte copié ✅','success');
+  else setNotice('actionMessage','Copie impossible. Sélectionne manuellement la caption dans le Studio.','error');
+});
+$('openInstagramFallbackBtn').addEventListener('click',()=>{location.href='instagram://camera';});
 function clearMediaSelection(){
-  selectedMediaItems=[];$('videoFile').value='';$('videoUrl').value='';$('libraryId').value='';$('thumbnailUrl').value='';syncMediaFields();renderSelectedMedia();hideNotice('uploadProgress');
+  clearPreparedInstagramShare();selectedMediaItems=[];$('videoFile').value='';$('videoUrl').value='';$('libraryId').value='';$('thumbnailUrl').value='';syncMediaFields();renderSelectedMedia();hideNotice('uploadProgress');
 }
 function configureMediaKind(clear=true){
   const kind=$('mediaKind').value,file=$('videoFile');
@@ -228,6 +317,7 @@ $('saveDraftBtn').addEventListener('click',()=>{const list=drafts();list.unshift
 $('clearDraftsBtn').addEventListener('click',()=>{if(confirm('Supprimer tous les brouillons locaux ?')){saveDrafts([]);renderDrafts();}});
 function loadDraft(id){
   const draft=drafts().find(x=>x.id===id);if(!draft)return;
+  clearPreparedInstagramShare();
   fields.forEach(f=>{if(draft[f]!==undefined)$(f).value=draft[f];});
   try{selectedMediaItems=JSON.parse(draft.mediaItemsJson||'[]');}catch{selectedMediaItems=[];}
   configureMediaKind(false);syncMediaFields();renderSelectedMedia();activateTab('composer');
@@ -310,9 +400,7 @@ $('publishBtn').addEventListener('click',async()=>{
       const data=await api('/api/publications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
       if(scheduled){setNotice('actionMessage','Publication programmée ✅','success');playStudioChime();activateTab('calendar');}
       else{
-        try{await navigator.clipboard.writeText(payload.caption);}catch{}
-        setNotice('actionMessage','Brouillon Studio enregistré et texte copié. Ajoute maintenant la musique dans Instagram.','success');
-        if(confirm('Ouvrir Instagram maintenant ?'))window.location.href='instagram://camera';
+        await prepareInstagramFinalization(payload);
       }
       return data;
     }
@@ -417,7 +505,10 @@ function renderCalendar(items,start){
     row.querySelector('.title').textContent=item.title||'Publication Instagram';row.querySelector('.details').textContent=`${eventDate(item).toLocaleString('fr-FR')} • ${mediaLabel} • ${statusLabels[item.status]||item.status}${item.publication_mode==='trial'?' • Trial Reel':''}${item.workflow==='manual_music'?' • Musique manuelle':''}`;
     if(item.last_error)row.querySelector('.error-text').textContent=item.last_error;
     if(['scheduled','failed','awaiting_manual'].includes(item.status)){const cancel=document.createElement('button');cancel.className='ghost';cancel.textContent='Annuler';cancel.onclick=async()=>{if(!confirm('Annuler cette publication ?'))return;try{await api(`/api/publications/${item.id}`,{method:'DELETE'});loadCalendar();}catch(err){setNotice('calendarNotice',err.message,'error');}};row.querySelector('.publication-actions').appendChild(cancel);}
-    if(item.status==='awaiting_manual'){const copy=document.createElement('button');copy.className='secondary';copy.textContent='Copier le texte';copy.onclick=()=>navigator.clipboard.writeText(item.caption||'');row.querySelector('.publication-actions').appendChild(copy);}
+    if(item.status==='awaiting_manual'){
+      const prepare=document.createElement('button');prepare.className='primary';prepare.textContent='Préparer les médias';prepare.onclick=async()=>{prepare.disabled=true;prepare.textContent='Préparation…';activateTab('composer');await prepareInstagramFinalization(item);prepare.disabled=false;prepare.textContent='Préparer les médias';};row.querySelector('.publication-actions').appendChild(prepare);
+      const copy=document.createElement('button');copy.className='secondary';copy.textContent='Copier le texte';copy.onclick=()=>copyInstagramCaption(item.caption||'','calendarNotice');row.querySelector('.publication-actions').appendChild(copy);
+    }
     list.appendChild(row);
   }
 }
