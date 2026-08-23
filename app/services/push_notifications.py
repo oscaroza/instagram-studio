@@ -14,6 +14,7 @@ DEFAULT_PREFERENCES = {
     "failed": True,
     "manual_music": True,
     "studio_login": True,
+    "instagram_token": True,
 }
 
 

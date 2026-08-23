@@ -6,7 +6,7 @@ import cloudinary.exceptions
 
 from app.config import settings
 from app.routes import v2
-from app.services import local_media, token_store
+from app.services import local_media, publication_safety, token_store
 from app.services.cloudinary_media import muted_video_url, safe_cloudinary_failure
 
 
@@ -180,3 +180,21 @@ def test_manual_music_workflow_accepts_photos_and_carousels(monkeypatch):
         assert result["publication"]["media_kind"] == media_kind
 
     assert [document["media_kind"] for document in inserted] == ["photo", "carousel"]
+
+
+def test_publication_claim_blocks_duplicate_until_released(monkeypatch):
+    monkeypatch.setattr(publication_safety, "database_configured", lambda: False)
+    key = publication_safety.publication_fingerprint(
+        media_kind="reel",
+        media_items=[{"url": "https://studio.example/reel.mp4"}],
+        caption="Caption unique",
+        publication_mode="normal",
+        workflow="auto_publish",
+    )
+
+    publication_safety.release_publication_claim(key)
+    assert publication_safety.claim_publication(key) is True
+    assert publication_safety.claim_publication(key) is False
+    publication_safety.release_publication_claim(key)
+    assert publication_safety.claim_publication(key) is True
+    publication_safety.release_publication_claim(key)

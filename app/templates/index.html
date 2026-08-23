@@ -139,6 +139,7 @@
           <button id="saveDraftBtn" class="secondary">Enregistrer le brouillon</button>
           <button id="publishBtn" class="danger">Publier le Reel</button>
         </div>
+        <div id="preflightNotice" class="notice hidden"></div>
         <div id="actionMessage" class="notice hidden"></div>
         <div id="instagramSharePanel" class="instagram-share-panel hidden">
           <div>
@@ -267,6 +268,7 @@
           <label class="toggle-row"><input id="notifyFailed" type="checkbox" checked><span>En cas d’échec</span></label>
           <label class="toggle-row"><input id="notifyMusic" type="checkbox" checked><span>Quand une publication avec musique est prête</span></label>
           <label class="toggle-row"><input id="notifyLogin" type="checkbox" checked><span>Quand quelqu’un se connecte au Studio</span></label>
+          <label class="toggle-row"><input id="notifyToken" type="checkbox" checked><span>Si le token Instagram expire bientôt ou si son renouvellement échoue</span></label>
         </div>
         <button id="savePushPrefs" class="secondary" type="button">Enregistrer les préférences</button>
       </div>
@@ -291,6 +293,7 @@
           <div><span>MongoDB</span><strong id="mongoStatusText">{{ 'Vérification de la connexion…' if mongodb_ready else 'MONGODB_URI manquante' }}</strong></div>
           <div><span>Cloudinary</span><strong id="cloudinaryStatusText">{{ 'Vérification de la connexion…' if cloudinary_ready else 'Variables Cloudinary manquantes' }}</strong></div>
           <div><span>Publications API • 24 h</span><strong id="publishingLimit">Chargement…</strong></div>
+          <div><span>Token Instagram</span><strong id="instagramTokenHealth">Chargement…</strong></div>
         </div>
         <button id="refreshLimitBtn" class="ghost" type="button">Actualiser le compteur</button>
         {% if oauth_ready %}<a class="button-link secondary" href="/auth/instagram">Connecter Instagram</a>{% endif %}
@@ -309,6 +312,18 @@
         <p class="muted small">Ce réglage reste uniquement dans ce navigateur. Il ne modifie pas le son des notifications iOS.</p>
       </div>
       <div class="card result-card">
+        <div class="row-between">
+          <div>
+            <h2>Connexions récentes</h2>
+            <p class="muted">Connexions acceptées et essais refusés des 90 derniers jours.</p>
+          </div>
+          <button id="refreshLoginHistory" class="ghost" type="button">Actualiser</button>
+        </div>
+        <div id="loginHistoryNotice" class="notice hidden"></div>
+        <div id="loginHistory" class="draft-list"><p class="muted">Chargement…</p></div>
+        <p class="muted small">Le Studio n’enregistre ni le code saisi ni l’adresse IP brute.</p>
+      </div>
+      <div class="card result-card">
         <h2>Capabilities de publication</h2>
         <div class="settings-list">
           {% for capability in publishing_capabilities %}
@@ -322,6 +337,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/app.js?v=17"></script>
 </body>
 </html>

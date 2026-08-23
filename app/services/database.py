@@ -61,6 +61,9 @@ def ensure_indexes() -> None:
         [("media_id", ASCENDING), ("captured_at", ASCENDING)]
     )
     db.analytics_reports.create_index("created_at")
+    db.publication_claims.create_index("expires_at", expireAfterSeconds=0)
+    db.login_rate_limits.create_index("updated_at", expireAfterSeconds=86400)
+    db.login_events.create_index("created_at", expireAfterSeconds=7776000)
 
 
 def object_id(value: str) -> ObjectId:

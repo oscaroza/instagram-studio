@@ -64,6 +64,18 @@ from app.services.token_store import (
     save_credentials,
     stored_credentials_exist,
 )
+from app.services.publication_safety import (
+    claim_publication,
+    publication_checks,
+    publication_fingerprint,
+    release_publication_claim,
+)
+from app.services.login_security import (
+    login_attempt_status,
+    login_client_context,
+    record_login_failure,
+    record_login_success,
+)
 from app.security import (
     SESSION_COOKIE,
     access_code_matches,
@@ -232,6 +244,7 @@ async def login(
     next: str = Form("/"),
 ):
     next_path = safe_next_path(next)
+    client_context = login_client_context(request)
 
     if not access_control_configured():
         return templates.TemplateResponse(
@@ -245,18 +258,48 @@ async def login(
             status_code=503,
         )
 
-    if not access_code_matches(access_code):
+    attempt_status = await asyncio.to_thread(
+        login_attempt_status, client_context["client_hash"]
+    )
+    if not attempt_status["allowed"]:
+        minutes = max(1, (attempt_status["retry_after_seconds"] + 59) // 60)
         return templates.TemplateResponse(
             request=request,
             name="login.html",
             context={
                 "configured": True,
                 "next_path": next_path,
-                "error": "Code d’accès incorrect.",
+                "error": f"Trop de tentatives. Réessaie dans {minutes} min.",
             },
-            status_code=401,
+            status_code=429,
         )
 
+    if not access_code_matches(access_code):
+        failed_status = await asyncio.to_thread(
+            record_login_failure, client_context
+        )
+        if not failed_status["allowed"]:
+            error = (
+                "Trop de tentatives. Connexion bloquée pendant "
+                f"{settings.login_lockout_minutes} min."
+            )
+            status_code = 429
+        else:
+            remaining = failed_status["remaining_attempts"]
+            error = f"Code d’accès incorrect. {remaining} essai(s) restant(s)."
+            status_code = 401
+        return templates.TemplateResponse(
+            request=request,
+            name="login.html",
+            context={
+                "configured": True,
+                "next_path": next_path,
+                "error": error,
+            },
+            status_code=status_code,
+        )
+
+    await asyncio.to_thread(record_login_success, client_context)
     response = RedirectResponse(next_path, status_code=303)
     response.set_cookie(
         key=SESSION_COOKIE,
@@ -662,12 +705,36 @@ async def instagram_publish(
             409,
         )
 
+    try:
+        publication_checks(
+            media_kind=media_kind,
+            media_items=media_items,
+            caption=caption,
+            publication_mode=publication_mode,
+            workflow="auto_publish",
+        )
+    except ValueError as exc:
+        return json_error(str(exc))
+    dedupe_key = publication_fingerprint(
+        media_kind=media_kind,
+        media_items=media_items,
+        caption=caption,
+        publication_mode=publication_mode,
+        workflow="auto_publish",
+    )
+    if not await asyncio.to_thread(claim_publication, dedupe_key):
+        return json_error(
+            "Cette publication identique est déjà en cours ou vient d’être envoyée.",
+            409,
+        )
+
     user_id, access_token = await resolve_instagram_credentials()
 
     if (
         not access_token
         or not user_id
     ):
+        await asyncio.to_thread(release_publication_claim, dedupe_key)
         return json_error(
             "Instagram n'est pas encore configuré. "
             "Ajoute INSTAGRAM_ACCESS_TOKEN et "
@@ -718,6 +785,7 @@ async def instagram_publish(
                 "workflow": "auto_publish",
                 "mute_audio": bool(payload.get("mute_audio")) if media_kind == "reel" else False,
                 "status": "published",
+                "dedupe_key": dedupe_key,
                 "creation_id": result.get("creation_id"),
                 "instagram_media_id": result.get("media_id"),
                 "published_at": utc_now(),
@@ -737,10 +805,14 @@ async def instagram_publish(
         }
 
     except InstagramError as exc:
+        await asyncio.to_thread(release_publication_claim, dedupe_key)
         return json_error(
             str(exc),
             502,
         )
+    except Exception:
+        await asyncio.to_thread(release_publication_claim, dedupe_key)
+        raise
 
 
 # ============================================================

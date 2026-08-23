@@ -138,7 +138,7 @@ function activateTab(name){
   tab.classList.add('active');panel.classList.add('active');
   history.replaceState({},'',`?tab=${name}`);
   if(name==='drafts')renderDrafts();
-  if(name==='settings')loadPublishingLimit();
+  if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();}
   if(name==='library')loadLibrary();
   if(name==='calendar')loadCalendar();
   if(name==='stats')loadAnalytics();
@@ -377,9 +377,12 @@ $('publishBtn').addEventListener('click',async()=>{
   }
   const kindLabel={reel:'ce Reel',photo:'cette photo',carousel:'ce carrousel'}[payload.media_kind];
   const question=scheduled?'Programmer cette publication ?':music?`Préparer ${kindLabel} pour Instagram ?`:`Publier ${kindLabel} maintenant sur Instagram ?`;
-  if(!confirm(question))return;
-  const btn=$('publishBtn');btn.disabled=true;const oldLabel=btn.textContent;btn.textContent='En cours…';
+  const btn=$('publishBtn');btn.disabled=true;const oldLabel=btn.textContent;btn.textContent='Vérification…';hideNotice('preflightNotice');
   try{
+    const preflight=await api('/api/publications/preflight',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    setNotice('preflightNotice',`Vérification réussie ✅\n${(preflight.checks||[]).map(check=>`• ${check}`).join('\n')}`,'success');
+    if(!confirm(question))return;
+    btn.textContent='En cours…';
     if(scheduled){
       const durableItems=payload.media_items.map(item=>({...item}));
       for(let index=0;index<payload.media_items.length;index++){
@@ -424,6 +427,33 @@ async function loadPublishingLimit(){
   catch(err){target.textContent=err.message;target.className='cap-off';}
 }
 $('refreshLimitBtn').addEventListener('click',loadPublishingLimit);
+async function loadInstagramTokenHealth(){
+  const target=$('instagramTokenHealth');target.textContent='Chargement…';target.className='';
+  try{
+    const data=await api('/api/instagram/token-health');
+    if(!data.configured){target.textContent='Non connecté';target.className='cap-off';return;}
+    if(data.refresh_error){target.textContent='Renouvellement à vérifier';target.className='cap-off';return;}
+    if(data.days_remaining!==null){target.textContent=`Actif • environ ${data.days_remaining} jour(s) restant(s)`;target.className=data.days_remaining<=7?'cap-off':'cap-on';return;}
+    target.textContent='Configuré • expiration inconnue';target.className='cap-on';
+  }catch(err){target.textContent=err.message;target.className='cap-off';}
+}
+async function loadLoginHistory(){
+  const root=$('loginHistory');
+  root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('loginHistoryNotice');
+  try{
+    const data=await api('/api/security/login-history');root.innerHTML='';
+    if(!data.events.length){root.innerHTML='<p class="muted">Aucune connexion enregistrée pour le moment.</p>';return;}
+    for(const event of data.events){
+      const row=document.createElement('div');row.className='draft-item';
+      const date=new Date(event.created_at).toLocaleString('fr-FR',{dateStyle:'medium',timeStyle:'short'});
+      row.innerHTML='<div class="row-between"><strong></strong><span class="pill"></span></div><p></p>';
+      row.querySelector('strong').textContent=`${event.device} • ${event.browser}`;
+      const status=row.querySelector('.pill');status.textContent=event.success?'Connexion réussie':'Essai refusé';status.classList.add(event.success?'ok':'warn');
+      row.querySelector('p').textContent=date;root.appendChild(row);
+    }
+  }catch(err){root.innerHTML='';setNotice('loginHistoryNotice',err.message,'error');}
+}
+$('refreshLoginHistory').addEventListener('click',loadLoginHistory);
 $('studioSoundEnabled').addEventListener('change',(event)=>{
   setStudioSoundEnabled(event.target.checked);refreshStudioSoundSetting();
   if(event.target.checked)playStudioChime();
@@ -631,7 +661,7 @@ $('analyzeStatsBtn').addEventListener('click',async()=>{
 $('statsSort').addEventListener('change',renderAnalyticsPosts);
 
 function urlBase64ToUint8Array(base64String){const padding='='.repeat((4-base64String.length%4)%4);const base64=(base64String+padding).replace(/-/g,'+').replace(/_/g,'/');const raw=atob(base64);return Uint8Array.from([...raw].map(char=>char.charCodeAt(0)));}
-function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked};}
+function pushPreferences(){return {before_publication:$('notifyBefore').checked,published:$('notifyPublished').checked,failed:$('notifyFailed').checked,manual_music:$('notifyMusic').checked,studio_login:$('notifyLogin').checked,instagram_token:$('notifyToken').checked};}
 async function pushRegistration(){if(!('serviceWorker'in navigator))throw new Error('Service workers non pris en charge.');return navigator.serviceWorker.ready;}
 async function refreshPushState(){
   if(!('Notification'in window)||!('serviceWorker'in navigator)){setNotice('pushNotice','Les notifications ne sont pas prises en charge sur ce navigateur.','error');return;}

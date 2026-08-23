@@ -4,16 +4,17 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 
 ## Fonctionnalités
 
-- accès par code côté serveur avec cookie de session sécurisé ;
+- accès par code côté serveur avec cookie de session sécurisé, limitation des essais et historique de connexion respectueux de la vie privée ;
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
 - publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 JPEG ;
 - calendrier mensuel et publications programmées côté serveur ;
 - bibliothèque média Cloudinary pour les publications programmées, indexée dans MongoDB, avec suppression manuelle ;
-- notifications Web Push PWA : 30 minutes avant, succès, échec et workflow musique ;
+- notifications Web Push PWA : 30 minutes avant, succès, échec, workflow musique, connexion et santé du token Instagram ;
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;
-- token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement.
+- token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement ;
+- vérification avant envoi et protection de 15 minutes contre une double publication identique.
 
 Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram. Ce workflow et le mode Trial restent réservés aux Reels.
 
@@ -40,6 +41,10 @@ Voir `.env.example` et `render.yaml`. Les secrets ne doivent jamais être commit
 APP_BASE_URL=https://TON-SERVICE.onrender.com
 STUDIO_ACCESS_CODE=...
 STUDIO_IDLE_MINUTES=5
+# Facultatif : les valeurs par défaut ci-dessous sont déjà actives
+LOGIN_MAX_ATTEMPTS=5
+LOGIN_WINDOW_MINUTES=15
+LOGIN_LOCKOUT_MINUTES=15
 CEREBRAS_API_KEY=TA_CLE_GROQ
 CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
 CEREBRAS_MODEL=openai/gpt-oss-20b
@@ -84,6 +89,8 @@ ENABLE_TRIAL_REELS=true
 
 Le bouton **Connecter Instagram** échange automatiquement le token court contre un token longue durée. Le token est montré une fois sur l’écran de succès, comme dans la V1, puis chiffré dans MongoDB avec `APP_SECRET_KEY`. Après 30 jours, le Studio tente de le renouveler automatiquement avant utilisation. Il ne doit jamais être journalisé.
 
+Le Studio peut aussi envoyer une notification si ce renouvellement échoue ou si le token stocké arrive à moins de 7 jours de son expiration. Cette alerte est activable séparément dans l’onglet **Notifications**.
+
 `INSTAGRAM_ACCESS_TOKEN` et `INSTAGRAM_USER_ID` restent acceptés comme solution de secours afin de ne pas casser la V1.
 
 ## Notifications sur iPhone
@@ -98,6 +105,8 @@ Web Push nécessite iOS/iPadOS 16.4 ou plus récent et l’application ajoutée 
 ## Sécurité de session
 
 La session d’accès est renouvelée uniquement lors d’une interaction avec le Studio. Après 5 minutes sans activité, le serveur refuse les nouvelles actions et l’interface affiche une bannière demandant d’actualiser la page pour se reconnecter. Le même contrôle s’applique au retour dans la PWA après plus de 5 minutes en arrière-plan. Cette déconnexion ne supprime ni le token Instagram chiffré ni les programmations.
+
+Par défaut, 5 codes incorrects sur une fenêtre de 15 minutes bloquent les nouveaux essais pendant 15 minutes. L’historique affiché dans **Réglages** est conservé 90 jours : il contient seulement la date, le type d’appareil, le navigateur et le résultat. Le code saisi et l’adresse IP brute ne sont jamais enregistrés.
 
 ## Programmation
 

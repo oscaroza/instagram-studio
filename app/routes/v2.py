@@ -39,11 +39,20 @@ from app.services.push_notifications import (
     save_subscription,
     update_preferences,
 )
+from app.services.publication_safety import (
+    claim_publication,
+    publication_checks,
+    publication_claim_exists,
+    publication_fingerprint,
+    release_publication_claim,
+)
 from app.services.local_media import (
     LocalMediaError,
     local_media_path,
     mute_local_video,
 )
+from app.services.login_security import list_login_history
+from app.services.token_store import token_health
 
 
 router = APIRouter(prefix="/api")
@@ -151,6 +160,24 @@ async def v2_status():
     }
 
 
+@router.get("/security/login-history")
+async def login_history():
+    try:
+        events = await asyncio.to_thread(list_login_history, 30)
+    except Exception:
+        return api_error("Historique des connexions temporairement indisponible.", 503)
+    return {"ok": True, "events": events}
+
+
+@router.get("/instagram/token-health")
+async def instagram_token_health():
+    try:
+        health = await asyncio.to_thread(token_health)
+    except Exception:
+        return api_error("État du token Instagram temporairement indisponible.", 503)
+    return {"ok": True, **health}
+
+
 @router.get("/analytics/dashboard")
 async def analytics_dashboard():
     if not database_configured():
@@ -204,6 +231,47 @@ async def run_analytics_assistant():
     except Exception:
         return api_error("Assistant Groq temporairement indisponible.", 503)
     return {"ok": True, "report": report, "model": settings.cerebras_model}
+
+
+@router.post("/publications/preflight")
+async def publication_preflight(payload: dict):
+    media_kind = str(payload.get("media_kind", "reel")).strip().lower()
+    if media_kind not in {"reel", "photo", "carousel"}:
+        return api_error("Type de publication invalide.")
+    try:
+        media_items = publication_media_items(payload, media_kind)
+        caption = str(payload.get("caption", "")).strip()
+        publication_mode = str(payload.get("publication_mode", "normal")).lower()
+        workflow = str(payload.get("workflow", "auto_publish")).lower()
+        scheduled_for = str(payload.get("scheduled_for", "")).strip()
+        if scheduled_for:
+            parsed = parse_datetime(scheduled_for)
+            if parsed <= utc_now() + timedelta(seconds=30):
+                raise ValueError("Programme la publication au moins une minute à l’avance.")
+        checks = publication_checks(
+            media_kind=media_kind,
+            media_items=media_items,
+            caption=caption,
+            publication_mode=publication_mode,
+            workflow=workflow,
+            scheduled_for=scheduled_for,
+        )
+        key = publication_fingerprint(
+            media_kind=media_kind,
+            media_items=media_items,
+            caption=caption,
+            publication_mode=publication_mode,
+            workflow=workflow,
+            scheduled_for=scheduled_for,
+        )
+        if await asyncio.to_thread(publication_claim_exists, key):
+            return api_error(
+                "Cette publication identique est déjà en cours ou vient d’être envoyée.",
+                409,
+            )
+    except ValueError as exc:
+        return api_error(str(exc))
+    return {"ok": True, "checks": checks}
 
 
 @router.get("/library")
@@ -404,6 +472,33 @@ async def create_publication(payload: dict):
     if workflow not in {"auto_publish", "manual_music"}:
         return api_error("Workflow de publication invalide.")
 
+    caption = str(payload.get("caption", "")).strip()
+    scheduled_text = str(payload.get("scheduled_for", "")).strip()
+    try:
+        publication_checks(
+            media_kind=media_kind,
+            media_items=media_items,
+            caption=caption,
+            publication_mode=publication_mode,
+            workflow=workflow,
+            scheduled_for=scheduled_text,
+        )
+    except ValueError as exc:
+        return api_error(str(exc))
+    dedupe_key = publication_fingerprint(
+        media_kind=media_kind,
+        media_items=media_items,
+        caption=caption,
+        publication_mode=publication_mode,
+        workflow=workflow,
+        scheduled_for=scheduled_text,
+    )
+    if not await asyncio.to_thread(claim_publication, dedupe_key):
+        return api_error(
+            "Cette publication identique est déjà en cours ou vient d’être envoyée.",
+            409,
+        )
+
     if mute_audio and library_id and cloudinary_configured():
         try:
             media = await asyncio.to_thread(
@@ -416,25 +511,30 @@ async def create_publication(payload: dict):
                     media.get("format", "mp4"),
                 )
         except Exception:
+            await asyncio.to_thread(release_publication_claim, dedupe_key)
             return api_error("Impossible de préparer la version sans son.", 503)
 
     scheduled_value = payload.get("scheduled_for")
     if scheduled_value:
         if len(library_ids) != len(media_items):
+            await asyncio.to_thread(release_publication_claim, dedupe_key)
             return api_error(
                 "Chaque média programmé doit d’abord être enregistré dans Cloudinary."
             )
         try:
             scheduled_for = parse_datetime(scheduled_value)
         except ValueError as exc:
+            await asyncio.to_thread(release_publication_claim, dedupe_key)
             return api_error(str(exc))
         if scheduled_for <= utc_now() + timedelta(seconds=30):
+            await asyncio.to_thread(release_publication_claim, dedupe_key)
             return api_error("Programme la publication au moins une minute à l’avance.")
         status = "scheduled"
     elif workflow == "manual_music":
         scheduled_for = None
         status = "awaiting_manual"
     else:
+        await asyncio.to_thread(release_publication_claim, dedupe_key)
         return api_error("Une date est requise pour programmer cette publication.")
 
     document = {
@@ -447,7 +547,7 @@ async def create_publication(payload: dict):
         "video_url": media_items[0]["url"] if media_kind == "reel" else "",
         "image_url": media_items[0]["url"] if media_kind == "photo" else "",
         "thumbnail_url": media_items[0].get("thumbnail_url", ""),
-        "caption": str(payload.get("caption", "")).strip(),
+        "caption": caption,
         "hook": str(payload.get("hook", "")).strip(),
         "alt_text": str(payload.get("alt_text", "")).strip(),
         "publication_mode": publication_mode,
@@ -456,6 +556,7 @@ async def create_publication(payload: dict):
         "status": status,
         "scheduled_for": scheduled_for,
         "timezone": str(payload.get("timezone", "Europe/Paris")),
+        "dedupe_key": dedupe_key,
         "attempts": 0,
         "created_at": utc_now(),
         "updated_at": utc_now(),
@@ -464,6 +565,7 @@ async def create_publication(payload: dict):
     try:
         result = await asyncio.to_thread(database().publications.insert_one, document)
     except Exception:
+        await asyncio.to_thread(release_publication_claim, dedupe_key)
         return api_error("Impossible d’enregistrer la publication dans MongoDB.", 503)
 
     document["_id"] = result.inserted_id

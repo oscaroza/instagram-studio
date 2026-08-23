@@ -42,6 +42,14 @@ class Settings:
         "true" if app_base_url.startswith("https://") else "false",
     ).lower() in {"1", "true", "yes", "on"}
 
+    login_max_attempts: int = max(1, int(os.getenv("LOGIN_MAX_ATTEMPTS", "5")))
+    login_window_minutes: int = max(
+        1, int(os.getenv("LOGIN_WINDOW_MINUTES", "15"))
+    )
+    login_lockout_minutes: int = max(
+        1, int(os.getenv("LOGIN_LOCKOUT_MINUTES", "15"))
+    )
+
     # ------------------------------------------------------------
     # IA
     # ------------------------------------------------------------

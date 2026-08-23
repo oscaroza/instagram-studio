@@ -33,7 +33,14 @@ def _save_credentials_sync(
                 "expires_at": now + timedelta(seconds=max(expires_in, 1)),
                 "refreshed_at": now,
                 "updated_at": now,
-            }
+            },
+            "$unset": {
+                "refresh_error_at": "",
+                "refresh_error_alert_sent_for": "",
+                "refresh_error_alert_attempted_at": "",
+                "expiry_alert_sent_for": "",
+                "expiry_alert_attempted_at": "",
+            },
         },
         upsert=True,
     )
@@ -92,6 +99,61 @@ def _load_credentials_sync() -> dict | None:
     }
 
 
+def token_health() -> dict:
+    if database_configured():
+        try:
+            document = database().instagram_credentials.find_one(
+                {"_id": "primary"},
+                {
+                    "encrypted_access_token": 0,
+                    "user_id": 0,
+                },
+            )
+            if document:
+                expires_at = document.get("expires_at")
+                days_remaining = None
+                if expires_at:
+                    days_remaining = max(
+                        0,
+                        int((expires_at - utc_now()).total_seconds() // 86400),
+                    )
+                return {
+                    "configured": True,
+                    "source": "mongodb",
+                    "expires_at": expires_at.isoformat() if expires_at else None,
+                    "days_remaining": days_remaining,
+                    "refresh_error": bool(document.get("refresh_error_at")),
+                }
+        except Exception:
+            pass
+    return {
+        "configured": bool(
+            settings.instagram_user_id and settings.instagram_access_token
+        ),
+        "source": "environment" if settings.instagram_access_token else "none",
+        "expires_at": None,
+        "days_remaining": None,
+        "refresh_error": False,
+    }
+
+
+def _record_refresh_error_sync() -> None:
+    if not database_configured():
+        return
+    try:
+        database().instagram_credentials.update_one(
+            {"_id": "primary", "refresh_error_at": {"$exists": False}},
+            {
+                "$set": {
+                    "refresh_error_at": utc_now(),
+                    "updated_at": utc_now(),
+                }
+            },
+        )
+    except Exception:
+        pass
+
+
 async def resolve_instagram_credentials(
     *,
     refresh_if_needed: bool = True,
@@ -129,5 +191,6 @@ async def resolve_instagram_credentials(
         )
         return user_id, new_token
     except InstagramError:
+        await asyncio.to_thread(_record_refresh_error_sync)
         # Keep using the still-valid token; publication errors remain explicit.
         return user_id, access_token

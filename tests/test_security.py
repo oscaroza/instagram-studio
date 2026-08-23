@@ -6,6 +6,7 @@ import app.main as main_module
 from app.config import settings
 from app.main import app
 from app.routes import v2
+from app.services import login_security
 from app.services.push_notifications import DEFAULT_PREFERENCES
 
 
@@ -168,6 +169,67 @@ def test_wrong_code_does_not_create_session():
             assert "instagram_studio_session" not in response.cookies
 
 
+def test_login_attempts_are_limited_without_storing_sensitive_values():
+    login_security.reset_local_login_security()
+    headers = {"user-agent": "InstagramStudio-Security-Test/iPhone"}
+    with temporary_settings(
+        studio_access_code="123456",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+        login_max_attempts=3,
+        login_window_minutes=15,
+        login_lockout_minutes=15,
+    ):
+        with TestClient(app) as client:
+            first = client.post(
+                "/login", data={"access_code": "000000"}, headers=headers
+            )
+            second = client.post(
+                "/login", data={"access_code": "000000"}, headers=headers
+            )
+            locked = client.post(
+                "/login", data={"access_code": "000000"}, headers=headers
+            )
+            correct_while_locked = client.post(
+                "/login", data={"access_code": "123456"}, headers=headers
+            )
+
+    assert first.status_code == 401
+    assert second.status_code == 401
+    assert locked.status_code == 429
+    assert correct_while_locked.status_code == 429
+    history = login_security.list_login_history()
+    assert len(history) == 3
+    assert all("client_hash" not in event for event in history)
+    assert "123456" not in str(history)
+    assert "000000" not in str(history)
+    login_security.reset_local_login_security()
+
+
+def test_login_history_endpoint_is_visible_in_settings():
+    login_security.reset_local_login_security()
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+    ):
+        with TestClient(app) as client:
+            client.post(
+                "/login",
+                data={"access_code": "test-only-code"},
+                headers={"user-agent": "Mobile Safari iPhone"},
+            )
+            page = client.get("/")
+            history = client.get("/api/security/login-history")
+
+    assert page.status_code == 200
+    assert 'id="loginHistory"' in page.text
+    assert history.status_code == 200
+    assert history.json()["events"][0]["success"] is True
+    assert history.json()["events"][0]["device"] == "iPhone"
+    login_security.reset_local_login_security()
+
+
 def test_pwa_assets_are_public_and_service_worker_controls_root():
     with temporary_settings(studio_access_code="test-only-code"):
         with TestClient(app) as client:
@@ -198,6 +260,28 @@ def test_studio_sound_controls_and_chime_are_available():
     assert "igstudio.studioSoundEnabled" in script.text
 
 
+def test_instagram_token_alert_is_available_without_exposing_token():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        mongodb_uri="",
+        instagram_user_id="test-user",
+        instagram_access_token="private-test-token",
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            health = client.get("/api/instagram/token-health")
+
+    assert page.status_code == 200
+    assert 'id="notifyToken"' in page.text
+    assert DEFAULT_PREFERENCES["instagram_token"] is True
+    assert health.status_code == 200
+    assert health.json()["source"] == "environment"
+    assert "private-test-token" not in health.text
+    assert "private-test-token" not in page.text
+
+
 def test_music_finalization_prepares_files_for_native_share():
     with temporary_settings(
         studio_access_code="test-only-code",
@@ -216,6 +300,30 @@ def test_music_finalization_prepares_files_for_native_share():
     assert "navigator.canShare({files})" in script.text
     assert "navigator.share({files:prepared.files" in script.text
     assert "instagram://camera" in script.text
+
+
+def test_preflight_rejects_caption_over_instagram_limit():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            response = client.post(
+                "/api/publications/preflight",
+                json={
+                    "media_kind": "photo",
+                    "media_items": [
+                        {"url": "https://studio.example/photo.jpg", "media_type": "image"}
+                    ],
+                    "caption": "x" * 2201,
+                    "publication_mode": "normal",
+                    "workflow": "auto_publish",
+                },
+            )
+
+    assert response.status_code == 400
+    assert "2 200" in response.json()["error"]
 
 
 def test_v3_stats_dashboard_is_rendered_without_removing_settings():

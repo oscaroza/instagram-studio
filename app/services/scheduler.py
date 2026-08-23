@@ -24,6 +24,72 @@ _tick_lock = asyncio.Lock()
 _indexes_ready = False
 
 
+async def _send_token_health_alerts() -> None:
+    now = utc_now()
+    document = await asyncio.to_thread(
+        database().instagram_credentials.find_one,
+        {"_id": "primary"},
+        {
+            "encrypted_access_token": 0,
+            "user_id": 0,
+        },
+    )
+    if not document:
+        return
+
+    retry_cutoff = now - timedelta(hours=6)
+    refresh_error_at = document.get("refresh_error_at")
+    refresh_attempted_at = document.get("refresh_error_alert_attempted_at")
+    refresh_sent_for = document.get("refresh_error_alert_sent_for")
+    if (
+        refresh_error_at
+        and refresh_sent_for != refresh_error_at
+        and (not refresh_attempted_at or refresh_attempted_at <= retry_cutoff)
+    ):
+        sent = await send_notification(
+            preference="instagram_token",
+            title="Token Instagram à vérifier",
+            body="Le renouvellement automatique a échoué. Reconnecte Instagram dans les Réglages.",
+            url="/?tab=settings",
+            tag="instagram-token-refresh",
+        )
+        update = {"refresh_error_alert_attempted_at": now}
+        if sent:
+            update["refresh_error_alert_sent_for"] = refresh_error_at
+        await asyncio.to_thread(
+            database().instagram_credentials.update_one,
+            {"_id": "primary"},
+            {"$set": update},
+        )
+
+    expires_at = document.get("expires_at")
+    refreshed_at = document.get("refreshed_at")
+    expiry_attempted_at = document.get("expiry_alert_attempted_at")
+    expiry_sent_for = document.get("expiry_alert_sent_for")
+    if (
+        expires_at
+        and expires_at <= now + timedelta(days=7)
+        and expiry_sent_for != refreshed_at
+        and (not expiry_attempted_at or expiry_attempted_at <= retry_cutoff)
+    ):
+        remaining = max(0, int((expires_at - now).total_seconds() // 86400))
+        sent = await send_notification(
+            preference="instagram_token",
+            title="Token Instagram bientôt expiré",
+            body=f"Le token expire dans environ {remaining} jour(s). Reconnecte Instagram dans les Réglages.",
+            url="/?tab=settings",
+            tag="instagram-token-expiry",
+        )
+        update = {"expiry_alert_attempted_at": now}
+        if sent:
+            update["expiry_alert_sent_for"] = refreshed_at
+        await asyncio.to_thread(
+            database().instagram_credentials.update_one,
+            {"_id": "primary"},
+            {"$set": update},
+        )
+
+
 async def _send_upcoming_reminders() -> None:
     now = utc_now()
     horizon = now + timedelta(minutes=30)
@@ -227,6 +293,7 @@ async def scheduler_tick() -> None:
             if not _indexes_ready:
                 await asyncio.to_thread(ensure_indexes)
                 _indexes_ready = True
+            await _send_token_health_alerts()
             await _send_upcoming_reminders()
             for _ in range(5):
                 publication = await asyncio.to_thread(_claim_due_publication)
