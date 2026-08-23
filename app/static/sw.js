@@ -1,7 +1,7 @@
-const CACHE_NAME = 'instagram-studio-v3-8';
+const CACHE_NAME = 'instagram-studio-v3-9';
 const APP_SHELL = [
-  '/static/styles.css?v=15',
-  '/static/app.js?v=17',
+  '/static/styles.css?v=16',
+  '/static/app.js?v=18',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png'
 ];

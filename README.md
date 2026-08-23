@@ -8,8 +8,9 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
 - publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 JPEG ;
-- calendrier mensuel et publications programmées côté serveur ;
-- bibliothèque média Cloudinary pour les publications programmées, indexée dans MongoDB, avec suppression manuelle ;
+- calendrier mensuel, hebdomadaire et liste, avec déplacement des programmations par glisser-déposer ;
+- bibliothèque média Cloudinary avec recherche, filtres par type/date/poids/utilisation et suppression manuelle ;
+- réorganisation des photos d’un carrousel par glisser-déposer, au doigt ou à la souris ;
 - notifications Web Push PWA : 30 minutes avant, succès, échec, workflow musique, connexion et santé du token Instagram ;
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;

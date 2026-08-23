@@ -1,5 +1,6 @@
 import asyncio
 import subprocess
+from datetime import timedelta
 
 import imageio_ffmpeg
 import cloudinary.exceptions
@@ -198,3 +199,86 @@ def test_publication_claim_blocks_duplicate_until_released(monkeypatch):
     publication_safety.release_publication_claim(key)
     assert publication_safety.claim_publication(key) is True
     publication_safety.release_publication_claim(key)
+
+
+def test_scheduled_publication_can_be_moved_and_reminder_is_reset(monkeypatch):
+    calls = []
+
+    class UpdateResult:
+        modified_count = 1
+
+    class Publications:
+        def update_one(self, query, update):
+            calls.append((query, update))
+            return UpdateResult()
+
+    class Database:
+        publications = Publications()
+
+    monkeypatch.setattr(v2, "database_configured", lambda: True)
+    monkeypatch.setattr(v2, "database", lambda: Database())
+    monkeypatch.setattr(v2, "object_id", lambda value: f"object-{value}")
+    future = v2.utc_now() + timedelta(days=2)
+
+    result = asyncio.run(
+        v2.reschedule_publication(
+            "publication-id",
+            {"scheduled_for": future.isoformat()},
+        )
+    )
+
+    assert result["ok"] is True
+    assert calls[0][0] == {"_id": "object-publication-id", "status": "scheduled"}
+    assert calls[0][1]["$set"]["scheduled_for"] == future
+    assert "reminder_sent_at" in calls[0][1]["$unset"]
+
+
+def test_library_reports_media_usage_for_filters(monkeypatch):
+    now = v2.utc_now()
+
+    class Cursor(list):
+        def sort(self, *args):
+            return self
+
+        def limit(self, *args):
+            return self
+
+    class Media:
+        def find(self, *args):
+            return Cursor(
+                [
+                    {
+                        "_id": "media-1",
+                        "original_filename": "plage.jpg",
+                        "description": "Coucher de soleil",
+                        "bytes": 1234,
+                        "created_at": now,
+                    }
+                ]
+            )
+
+    class Publications:
+        def find(self, *args):
+            return Cursor(
+                [
+                    {
+                        "library_ids": ["media-1"],
+                        "status": "scheduled",
+                        "scheduled_for": now + timedelta(days=1),
+                    }
+                ]
+            )
+
+    class Database:
+        media = Media()
+        publications = Publications()
+
+    monkeypatch.setattr(v2, "database_configured", lambda: True)
+    monkeypatch.setattr(v2, "database", lambda: Database())
+
+    result = asyncio.run(v2.list_library())
+
+    assert result["ok"] is True
+    assert result["items"][0]["usage_count"] == 1
+    assert result["items"][0]["active_usage_count"] == 1
+    assert result["items"][0]["description"] == "Coucher de soleil"

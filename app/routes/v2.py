@@ -282,6 +282,52 @@ async def list_library():
     def query():
         documents = list(database().media.find({}).sort("created_at", -1).limit(200))
         total_bytes = sum(int(item.get("bytes", 0)) for item in documents)
+        media_ids = [str(item["_id"]) for item in documents]
+        usage: dict[str, dict[str, Any]] = {
+            media_id: {"usage_count": 0, "active_usage_count": 0, "last_used_at": None}
+            for media_id in media_ids
+        }
+        if media_ids:
+            publications = database().publications.find(
+                {
+                    "$or": [
+                        {"library_id": {"$in": media_ids}},
+                        {"library_ids": {"$in": media_ids}},
+                    ]
+                },
+                {
+                    "library_id": 1,
+                    "library_ids": 1,
+                    "status": 1,
+                    "scheduled_for": 1,
+                    "published_at": 1,
+                    "created_at": 1,
+                },
+            )
+            for publication in publications:
+                references = set(publication.get("library_ids") or [])
+                if publication.get("library_id"):
+                    references.add(publication["library_id"])
+                used_at = (
+                    publication.get("published_at")
+                    or publication.get("scheduled_for")
+                    or publication.get("created_at")
+                )
+                for media_id in references:
+                    if media_id not in usage:
+                        continue
+                    usage[media_id]["usage_count"] += 1
+                    if publication.get("status") in {
+                        "scheduled",
+                        "publishing",
+                        "awaiting_manual",
+                    }:
+                        usage[media_id]["active_usage_count"] += 1
+                    previous = usage[media_id]["last_used_at"]
+                    if used_at and (not previous or used_at > previous):
+                        usage[media_id]["last_used_at"] = used_at
+        for item in documents:
+            item.update(usage[str(item["_id"])])
         return documents, total_bytes
 
     try:
@@ -337,6 +383,7 @@ async def promote_media_to_library(payload: dict):
             "width": cloud_media["width"],
             "height": cloud_media["height"],
             "original_filename": cloud_media["original_filename"],
+            "description": str(payload.get("description", "")).strip()[:500],
             "media_type": cloud_media["media_type"],
             "resource_type": cloud_media["resource_type"],
             "created_at": utc_now(),
@@ -600,6 +647,39 @@ async def calendar_publications(start: str = "", end: str = ""):
         "ok": True,
         "items": [serialize_document(item) for item in documents],
     }
+
+
+@router.patch("/publications/{publication_id}/schedule")
+async def reschedule_publication(publication_id: str, payload: dict):
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        identifier = object_id(publication_id)
+        scheduled_for = parse_datetime(payload.get("scheduled_for"))
+    except ValueError as exc:
+        return api_error(str(exc))
+    if scheduled_for <= utc_now() + timedelta(seconds=30):
+        return api_error("Déplace la publication au moins une minute dans le futur.")
+
+    result = await asyncio.to_thread(
+        database().publications.update_one,
+        {"_id": identifier, "status": "scheduled"},
+        {
+            "$set": {
+                "scheduled_for": scheduled_for,
+                "updated_at": utc_now(),
+            },
+            "$unset": {
+                "reminder_sent_at": "",
+            },
+        },
+    )
+    if not result.modified_count:
+        return api_error(
+            "Cette publication n’est plus programmable ou la date n’a pas changé.",
+            409,
+        )
+    return {"ok": True, "scheduled_for": scheduled_for.isoformat()}
 
 
 @router.delete("/publications/{publication_id}")

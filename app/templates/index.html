@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=15">
+  <link rel="stylesheet" href="/static/styles.css?v=16">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -60,6 +60,7 @@
             <span id="mediaUploadHelp">MP4 / MOV / M4V • max {{ max_upload_mb }} Mo</span>
           </label>
           <div id="selectedMedia" class="selected-media"></div>
+          <p id="carouselOrderHelp" class="muted small hidden">Maintiens la poignée ⋮⋮ puis fais glisser les photos pour définir leur ordre sur Instagram.</p>
           <div id="publicUrlBlock">
             <div class="or">ou</div>
             <label><span id="mediaUrlLabel">URL vidéo publique</span>
@@ -168,12 +169,21 @@
           <h2 id="calendarTitle">Calendrier</h2>
           <button id="calendarNext" class="ghost" type="button">→</button>
         </div>
+        <div class="organization-toolbar">
+          <div class="view-switch" aria-label="Vue du calendrier">
+            <button class="secondary active" data-calendar-view="month" type="button">Mois</button>
+            <button class="ghost" data-calendar-view="week" type="button">Semaine</button>
+            <button class="ghost" data-calendar-view="list" type="button">Liste</button>
+          </div>
+          <button id="calendarToday" class="ghost" type="button">Aujourd’hui</button>
+        </div>
+        <p id="calendarDragHelp" class="muted small">Fais glisser une publication programmée vers un autre jour pour la déplacer.</p>
         <div class="calendar-weekdays"><span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span><span>Ven</span><span>Sam</span><span>Dim</span></div>
         <div id="calendarGrid" class="calendar-grid"></div>
         <div id="calendarNotice" class="notice hidden"></div>
       </div>
       <div class="card result-card">
-        <h2>Publications du mois</h2>
+        <h2 id="calendarListTitle">Publications du mois</h2>
         <div id="calendarList" class="publication-list"></div>
       </div>
     </section>
@@ -250,6 +260,43 @@
       <div class="card">
         <div class="row-between"><div><h2>Bibliothèque Cloudinary</h2><p class="muted">Les métadonnées sont conservées dans MongoDB.</p></div><button id="refreshLibrary" class="ghost" type="button">Actualiser</button></div>
         <p id="libraryUsage" class="muted small">Chargement…</p>
+        <div class="library-filters">
+          <label class="library-search">Rechercher
+            <input id="librarySearch" type="search" placeholder="Nom ou description…" autocomplete="off">
+          </label>
+          <label>Type
+            <select id="libraryTypeFilter">
+              <option value="all">Tous</option>
+              <option value="image">Photos</option>
+              <option value="video">Vidéos</option>
+            </select>
+          </label>
+          <label>Date
+            <select id="libraryDateFilter">
+              <option value="all">Toutes</option>
+              <option value="7">7 derniers jours</option>
+              <option value="30">30 derniers jours</option>
+              <option value="older">Plus de 30 jours</option>
+            </select>
+          </label>
+          <label>Poids
+            <select id="libraryWeightFilter">
+              <option value="all">Tous</option>
+              <option value="small">Moins de 10 Mo</option>
+              <option value="medium">10 à 50 Mo</option>
+              <option value="large">Plus de 50 Mo</option>
+            </select>
+          </label>
+          <label>Utilisation
+            <select id="libraryUsageFilter">
+              <option value="all">Tous</option>
+              <option value="active">Programmés</option>
+              <option value="used">Déjà utilisés</option>
+              <option value="unused">Jamais utilisés</option>
+            </select>
+          </label>
+        </div>
+        <p id="libraryResults" class="muted small"></p>
         <div id="libraryNotice" class="notice hidden"></div>
         <div id="libraryGrid" class="library-grid"></div>
       </div>
@@ -337,6 +384,6 @@
     </section>
   </main>
 
-  <script src="/static/app.js?v=17"></script>
+  <script src="/static/app.js?v=18"></script>
 </body>
 </html>

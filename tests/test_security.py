@@ -347,6 +347,28 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'id="settings"' in page.text
 
 
+def test_phase_two_organization_controls_are_available():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert 'data-calendar-view="month"' in page.text
+    assert 'data-calendar-view="week"' in page.text
+    assert 'data-calendar-view="list"' in page.text
+    assert 'id="librarySearch"' in page.text
+    assert 'id="libraryUsageFilter"' in page.text
+    assert 'id="carouselOrderHelp"' in page.text
+    assert "startMediaPointerDrag" in script.text
+    assert "moveScheduledPublication" in script.text
+    assert "/schedule" in script.text
+
+
 def test_upload_stays_temporary_even_when_v2_storage_is_configured():
     with temporary_settings(
         studio_access_code="test-only-code",

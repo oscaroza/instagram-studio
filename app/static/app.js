@@ -9,7 +9,10 @@ const statusLabels = {
 };
 let calendarCursor = new Date();
 calendarCursor.setDate(1);
+let calendarView = (()=>{try{return localStorage.getItem('igstudio.calendarView')||'month';}catch{return 'month';}})();
+if(!['month','week','list'].includes(calendarView))calendarView='month';
 let selectedMediaItems = [];
+let libraryItems = [];
 let analyticsPosts = [];
 let preparedInstagramShare = null;
 const SESSION_IDLE_MS = Math.max(60,Number(document.body.dataset.sessionIdleSeconds)||300) * 1000;
@@ -157,15 +160,44 @@ function syncMediaFields(){
 }
 function renderSelectedMedia(){
   const root=$('selectedMedia');root.innerHTML='';
+  const reorderable=$('mediaKind').value==='carousel'&&selectedMediaItems.length>1;
+  $('carouselOrderHelp').classList.toggle('hidden',!reorderable);
   selectedMediaItems.forEach((item,index)=>{
-    const row=document.createElement('div');row.className='selected-media-item';
-    row.innerHTML='<img alt=""><div><strong></strong><span></span></div><button class="ghost" type="button">Retirer</button>';
+    const row=document.createElement('div');row.className='selected-media-item';row.dataset.index=index;
+    row.innerHTML='<span class="media-drag-handle" role="button" tabindex="0" aria-label="Déplacer ce média">⋮⋮</span><img alt=""><div><strong></strong><span></span></div><button class="ghost remove-media" type="button">Retirer</button>';
     row.querySelector('img').src=item.thumbnail_url||item.url||'/static/icons/icon-192.png';
     row.querySelector('strong').textContent=item.name||`Média ${index+1}`;
-    row.querySelector('span').textContent=`${item.media_type==='image'?'Photo JPEG':'Vidéo'}${item.size?` • ${formatBytes(item.size)}`:''}`;
-    row.querySelector('button').onclick=()=>{selectedMediaItems.splice(index,1);syncMediaFields();renderSelectedMedia();};
+    row.querySelector('div span').textContent=`Position ${index+1} • ${item.media_type==='image'?'Photo JPEG':'Vidéo'}${item.size?` • ${formatBytes(item.size)}`:''}`;
+    const handle=row.querySelector('.media-drag-handle');handle.classList.toggle('hidden',!reorderable);
+    handle.addEventListener('keydown',(event)=>{
+      if(!reorderable||!['ArrowUp','ArrowDown'].includes(event.key))return;
+      event.preventDefault();const target=index+(event.key==='ArrowUp'?-1:1);reorderSelectedMedia(index,target);
+      root.children[Math.max(0,Math.min(target,root.children.length-1))]?.querySelector('.media-drag-handle')?.focus();
+    });
+    handle.addEventListener('pointerdown',(event)=>startMediaPointerDrag(event,row,root));
+    row.querySelector('.remove-media').onclick=()=>{selectedMediaItems.splice(index,1);syncMediaFields();renderSelectedMedia();};
     root.appendChild(row);
   });
+}
+function reorderSelectedMedia(fromIndex,toIndex){
+  if(fromIndex===toIndex||toIndex<0||toIndex>=selectedMediaItems.length)return;
+  const [moved]=selectedMediaItems.splice(fromIndex,1);selectedMediaItems.splice(toIndex,0,moved);syncMediaFields();renderSelectedMedia();
+}
+function startMediaPointerDrag(event,row,root){
+  if($('mediaKind').value!=='carousel'||selectedMediaItems.length<2)return;
+  event.preventDefault();const handle=event.currentTarget;handle.setPointerCapture?.(event.pointerId);row.classList.add('dragging');
+  const finish=()=>{
+    const reordered=[...root.children].map(element=>selectedMediaItems[Number(element.dataset.index)]).filter(Boolean);
+    if(reordered.length===selectedMediaItems.length)selectedMediaItems=reordered;
+    syncMediaFields();renderSelectedMedia();
+  };
+  handle.addEventListener('pointermove',(moveEvent)=>{
+    const target=document.elementFromPoint(moveEvent.clientX,moveEvent.clientY)?.closest('.selected-media-item');
+    if(!target||target===row||target.parentElement!==root)return;
+    const bounds=target.getBoundingClientRect();
+    root.insertBefore(row,moveEvent.clientY<bounds.top+bounds.height/2?target:target.nextSibling);
+  });
+  handle.addEventListener('pointerup',finish,{once:true});handle.addEventListener('pointercancel',finish,{once:true});
 }
 function clearPreparedInstagramShare(){
   preparedInstagramShare=null;
@@ -272,6 +304,7 @@ function configureMediaKind(clear=true){
   $('publicationModeField').classList.toggle('hidden',kind!=='reel');
   $('muteOption').classList.toggle('hidden',kind!=='reel');
   if(kind!=='reel'){$('publicationMode').value='normal';$('muteAudio').checked=false;}
+  $('carouselOrderHelp').classList.toggle('hidden',kind!=='carousel'||selectedMediaItems.length<2);
   updatePublicationOptions();
 }
 $('mediaKind').addEventListener('change',()=>configureMediaKind(true));
@@ -389,7 +422,7 @@ $('publishBtn').addEventListener('click',async()=>{
         const item=durableItems[index];
         if(item.library_id)continue;
         setNotice('actionMessage',`Copie durable vers Cloudinary (${index+1}/${payload.media_items.length})…`);
-        const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:item.url,media_type:item.media_type,mute_audio:payload.mute_audio})});
+        const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:item.url,media_type:item.media_type,mute_audio:payload.mute_audio,description:payload.title})});
         durableItems[index]={...item,url:promoted.url,library_id:promoted.media.id,thumbnail_url:promoted.media.thumbnail_url||item.thumbnail_url};
         payload.media_items=durableItems;selectedMediaItems=durableItems.map(mediaItem=>({...mediaItem}));syncMediaFields();renderSelectedMedia();
       }
@@ -479,16 +512,50 @@ async function loadV2Status(){
 async function loadLibrary(){
   const root=$('libraryGrid');root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('libraryNotice');
   try{
-    const data=await api('/api/library');root.innerHTML='';
-    $('libraryUsage').textContent=`${data.items.length} média(s) • ${formatBytes(data.total_bytes)} gérés par le Studio dans Cloudinary`;
-    if(!data.items.length){root.innerHTML='<p class="muted">La bibliothèque est vide.</p>';return;}
-    for(const item of data.items){
+    const data=await api('/api/library');libraryItems=data.items||[];
+    $('libraryUsage').textContent=`${libraryItems.length} média(s) • ${formatBytes(data.total_bytes)} gérés par le Studio dans Cloudinary`;
+    renderLibrary();
+  }catch(err){root.innerHTML='';setNotice('libraryNotice',err.message,'error');}
+}
+function filteredLibraryItems(){
+  const search=$('librarySearch').value.trim().toLocaleLowerCase('fr');
+  const type=$('libraryTypeFilter').value,dateFilter=$('libraryDateFilter').value,weight=$('libraryWeightFilter').value,usage=$('libraryUsageFilter').value;
+  const now=Date.now(),day=86400000;
+  return libraryItems.filter(item=>{
+    const itemType=item.media_type||item.resource_type||'video';
+    if(type!=='all'&&itemType!==type)return false;
+    const haystack=`${item.original_filename||''} ${item.description||''}`.toLocaleLowerCase('fr');
+    if(search&&!haystack.includes(search))return false;
+    const age=now-Date.parse(item.created_at||0);
+    if(dateFilter==='7'&&age>7*day)return false;
+    if(dateFilter==='30'&&age>30*day)return false;
+    if(dateFilter==='older'&&age<=30*day)return false;
+    const bytes=Number(item.bytes)||0,tenMb=10*1024*1024,fiftyMb=50*1024*1024;
+    if(weight==='small'&&bytes>=tenMb)return false;
+    if(weight==='medium'&&(bytes<tenMb||bytes>fiftyMb))return false;
+    if(weight==='large'&&bytes<=fiftyMb)return false;
+    if(usage==='active'&&Number(item.active_usage_count||0)<1)return false;
+    if(usage==='used'&&Number(item.usage_count||0)<1)return false;
+    if(usage==='unused'&&Number(item.usage_count||0)>0)return false;
+    return true;
+  });
+}
+function renderLibrary(){
+  const root=$('libraryGrid');root.innerHTML='';const items=filteredLibraryItems();
+  $('libraryResults').textContent=`${items.length} résultat(s) affiché(s)`;
+  if(!libraryItems.length){root.innerHTML='<p class="muted">La bibliothèque est vide.</p>';return;}
+  if(!items.length){root.innerHTML='<p class="muted">Aucun média ne correspond à ces filtres.</p>';return;}
+  for(const item of items){
       const card=document.createElement('article');card.className='media-card';
-      card.innerHTML='<img alt=""><div class="media-card-body"><strong></strong><span class="muted small meta"></span><div class="draft-actions"><button class="secondary use">Utiliser</button><button class="ghost delete">Supprimer</button></div></div>';
+      card.innerHTML='<img alt=""><div class="media-card-body"><strong></strong><span class="muted small description"></span><span class="muted small meta"></span><span class="muted small usage"></span><div class="draft-actions"><button class="secondary use">Utiliser</button><button class="ghost delete">Supprimer</button></div></div>';
       card.querySelector('img').src=item.thumbnail_url||'/static/icons/icon-192.png';
       const itemType=item.media_type||item.resource_type||'video';
       card.querySelector('strong').textContent=item.original_filename||(itemType==='image'?'Photo':'Vidéo');
-      card.querySelector('.meta').textContent=itemType==='image'?`${formatBytes(item.bytes)} • ${item.width||'?'} × ${item.height||'?'}`:`${formatBytes(item.bytes)} • ${Math.round(item.duration||0)} s`;
+      const created=item.created_at?new Date(item.created_at).toLocaleDateString('fr-FR'):'Date inconnue';
+      card.querySelector('.description').textContent=item.description||'Sans description';
+      card.querySelector('.meta').textContent=itemType==='image'?`${formatBytes(item.bytes)} • ${item.width||'?'} × ${item.height||'?'} • ${created}`:`${formatBytes(item.bytes)} • ${Math.round(item.duration||0)} s • ${created}`;
+      const uses=Number(item.usage_count||0),active=Number(item.active_usage_count||0);
+      card.querySelector('.usage').textContent=active?`Utilisé dans ${active} programmation(s) active(s)`:uses?`Utilisé ${uses} fois`:'Jamais utilisé';
       card.querySelector('.use').onclick=()=>{
         const mediaItem={url:item.secure_url,library_id:item.id,thumbnail_url:item.thumbnail_url||'',media_type:itemType,name:item.original_filename||'Média',size:item.bytes||0};
         if(itemType==='image'&&$('mediaKind').value==='carousel'){
@@ -501,34 +568,91 @@ async function loadLibrary(){
       };
       card.querySelector('.delete').onclick=async()=>{if(!confirm(`Supprimer définitivement « ${item.original_filename||'ce média'} » ?`))return;try{await api(`/api/library/${item.id}`,{method:'DELETE'});loadLibrary();}catch(err){setNotice('libraryNotice',err.message,'error');}};
       root.appendChild(card);
-    }
-  }catch(err){root.innerHTML='';setNotice('libraryNotice',err.message,'error');}
+  }
 }
 $('refreshLibrary').addEventListener('click',loadLibrary);
+for(const id of ['librarySearch','libraryTypeFilter','libraryDateFilter','libraryWeightFilter','libraryUsageFilter']){
+  $(id).addEventListener(id==='librarySearch'?'input':'change',renderLibrary);
+}
 
-function monthBounds(){
-  const start=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth(),1);
-  const end=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth()+1,1);
-  return {start,end};
+function startOfWeek(value){const date=new Date(value);date.setHours(0,0,0,0);date.setDate(date.getDate()-((date.getDay()+6)%7));return date;}
+function calendarBounds(){
+  if(calendarView==='week'){const start=startOfWeek(calendarCursor);const end=new Date(start);end.setDate(end.getDate()+7);return {start,end};}
+  const start=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth(),1);const end=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth()+1,1);return {start,end};
 }
 function eventDate(item){return new Date(item.scheduled_for||item.published_at||item.created_at);}
+function localDateKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
+function calendarTitle(start,end){
+  if(calendarView==='week'){
+    const last=new Date(end);last.setDate(last.getDate()-1);
+    return `${start.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})} – ${last.toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'})}`;
+  }
+  return new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'}).format(start);
+}
 async function loadCalendar(){
-  const {start,end}=monthBounds();$('calendarTitle').textContent=new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'}).format(start);hideNotice('calendarNotice');
-  try{const data=await api(`/api/publications/calendar?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);renderCalendar(data.items,start);}
+  const {start,end}=calendarBounds();$('calendarTitle').textContent=calendarTitle(start,end);hideNotice('calendarNotice');
+  document.querySelectorAll('[data-calendar-view]').forEach(button=>{const active=button.dataset.calendarView===calendarView;button.className=active?'secondary active':'ghost';});
+  const listOnly=calendarView==='list';document.querySelector('.calendar-weekdays').classList.toggle('hidden',listOnly);$('calendarGrid').classList.toggle('hidden',listOnly);$('calendarDragHelp').classList.toggle('hidden',listOnly);
+  $('calendarListTitle').textContent=calendarView==='week'?'Publications de la semaine':calendarView==='list'?'Publications du mois • liste':'Publications du mois';
+  try{const data=await api(`/api/publications/calendar?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);renderCalendar(data.items,start,end);}
   catch(err){setNotice('calendarNotice',err.message,'error');$('calendarGrid').innerHTML='';$('calendarList').innerHTML='';}
 }
-function renderCalendar(items,start){
-  const grid=$('calendarGrid'),list=$('calendarList');grid.innerHTML='';list.innerHTML='';
-  const firstOffset=(start.getDay()+6)%7;const days=new Date(start.getFullYear(),start.getMonth()+1,0).getDate();
-  for(let i=0;i<firstOffset;i++){const blank=document.createElement('div');blank.className='calendar-day empty';grid.appendChild(blank);}
-  for(let day=1;day<=days;day++){
-    const cell=document.createElement('div');cell.className='calendar-day';cell.innerHTML='<span class="day-number"></span><div class="day-events"></div>';cell.querySelector('.day-number').textContent=day;
-    const dayItems=items.filter(item=>{const d=eventDate(item);return d.getFullYear()===start.getFullYear()&&d.getMonth()===start.getMonth()&&d.getDate()===day;});
-    for(const item of dayItems){const badge=document.createElement('button');badge.className=`calendar-event status-${item.status}`;badge.textContent=item.title||statusLabels[item.status];badge.title=`${statusLabels[item.status]||item.status} • ${eventDate(item).toLocaleString()}`;badge.onclick=()=>document.getElementById(`publication-${item.id}`)?.scrollIntoView({behavior:'smooth'});cell.querySelector('.day-events').appendChild(badge);}
-    grid.appendChild(cell);
+function sameLocalDay(first,second){return first.getFullYear()===second.getFullYear()&&first.getMonth()===second.getMonth()&&first.getDate()===second.getDate();}
+function calendarDayCell(date,items){
+  const cell=document.createElement('div');cell.className='calendar-day';cell.dataset.date=localDateKey(date);cell.innerHTML='<span class="day-number"></span><div class="day-events"></div>';
+  cell.querySelector('.day-number').textContent=calendarView==='week'?date.toLocaleDateString('fr-FR',{weekday:'short',day:'numeric'}):date.getDate();
+  if(sameLocalDay(date,new Date()))cell.classList.add('today');
+  installCalendarDropTarget(cell);
+  for(const item of items.filter(value=>sameLocalDay(eventDate(value),date))){
+    const badge=document.createElement('button');badge.className=`calendar-event status-${item.status}`;badge.textContent=item.title||statusLabels[item.status];badge.title=`${statusLabels[item.status]||item.status} • ${eventDate(item).toLocaleString()}`;
+    badge.onclick=()=>{if(badge.dataset.justDragged)return;document.getElementById(`publication-${item.id}`)?.scrollIntoView({behavior:'smooth'});};
+    if(item.status==='scheduled')installCalendarEventDrag(badge,item);
+    cell.querySelector('.day-events').appendChild(badge);
   }
-  if(!items.length){list.innerHTML='<p class="muted">Aucune publication ce mois-ci.</p>';return;}
-  for(const item of items.sort((a,b)=>eventDate(a)-eventDate(b))){
+  return cell;
+}
+let draggedCalendarItem=null;
+function installCalendarDropTarget(cell){
+  cell.addEventListener('dragover',(event)=>{if(!draggedCalendarItem)return;event.preventDefault();cell.classList.add('drop-target');});
+  cell.addEventListener('dragleave',(event)=>{if(!cell.contains(event.relatedTarget))cell.classList.remove('drop-target');});
+  cell.addEventListener('drop',async(event)=>{event.preventDefault();cell.classList.remove('drop-target');if(draggedCalendarItem)await moveScheduledPublication(draggedCalendarItem,cell.dataset.date);});
+}
+function installCalendarEventDrag(badge,item){
+  badge.draggable=true;badge.classList.add('draggable');
+  badge.addEventListener('dragstart',(event)=>{draggedCalendarItem=item;badge.classList.add('dragging');event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',item.id);});
+  badge.addEventListener('dragend',()=>{draggedCalendarItem=null;badge.classList.remove('dragging');document.querySelectorAll('.calendar-day.drop-target').forEach(cell=>cell.classList.remove('drop-target'));});
+  badge.addEventListener('pointerdown',(event)=>{
+    if(event.pointerType==='mouse')return;
+    const startX=event.clientX,startY=event.clientY;let target=null,moved=false;badge.setPointerCapture?.(event.pointerId);
+    const move=(moveEvent)=>{
+      if(Math.hypot(moveEvent.clientX-startX,moveEvent.clientY-startY)<8&&!moved)return;
+      moved=true;moveEvent.preventDefault();badge.classList.add('dragging');
+      const next=document.elementFromPoint(moveEvent.clientX,moveEvent.clientY)?.closest('.calendar-day[data-date]');
+      if(next===target)return;if(target)target.classList.remove('drop-target');target=next;if(target)target.classList.add('drop-target');
+    };
+    const finish=async()=>{
+      badge.removeEventListener('pointermove',move);if(target)target.classList.remove('drop-target');badge.classList.remove('dragging');
+      if(moved&&target){badge.dataset.justDragged='1';setTimeout(()=>delete badge.dataset.justDragged,300);await moveScheduledPublication(item,target.dataset.date);}
+    };
+    badge.addEventListener('pointermove',move);badge.addEventListener('pointerup',finish,{once:true});badge.addEventListener('pointercancel',finish,{once:true});
+  });
+}
+async function moveScheduledPublication(item,dateKey){
+  const [year,month,day]=dateKey.split('-').map(Number),current=eventDate(item);const next=new Date(year,month-1,day,current.getHours(),current.getMinutes(),current.getSeconds());
+  if(next.getTime()===current.getTime())return;
+  try{await api(`/api/publications/${item.id}/schedule`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({scheduled_for:next.toISOString()})});setNotice('calendarNotice',`Publication déplacée au ${next.toLocaleString('fr-FR')} ✅`,'success');await loadCalendar();}
+  catch(err){setNotice('calendarNotice',err.message,'error');}
+}
+function renderCalendar(items,start,end){
+  const grid=$('calendarGrid'),list=$('calendarList');grid.innerHTML='';list.innerHTML='';
+  if(calendarView==='month'){
+    const firstOffset=(start.getDay()+6)%7;for(let index=0;index<firstOffset;index++){const blank=document.createElement('div');blank.className='calendar-day empty';grid.appendChild(blank);}
+    for(let date=new Date(start);date<end;date.setDate(date.getDate()+1))grid.appendChild(calendarDayCell(new Date(date),items));
+  }else if(calendarView==='week'){
+    for(let date=new Date(start);date<end;date.setDate(date.getDate()+1))grid.appendChild(calendarDayCell(new Date(date),items));
+  }
+  if(!items.length){list.innerHTML=`<p class="muted">Aucune publication ${calendarView==='week'?'cette semaine':'ce mois-ci'}.</p>`;return;}
+  for(const item of [...items].sort((a,b)=>eventDate(a)-eventDate(b))){
     const row=document.createElement('article');row.className='publication-item';row.id=`publication-${item.id}`;
     row.innerHTML='<div><strong class="title"></strong><p class="muted small details"></p><p class="error-text"></p></div><div class="publication-actions"></div>';
     const mediaLabel={photo:'Photo',carousel:'Carrousel',reel:'Reel'}[item.media_kind||'reel'];
@@ -542,8 +666,10 @@ function renderCalendar(items,start){
     list.appendChild(row);
   }
 }
-$('calendarPrev').addEventListener('click',()=>{calendarCursor.setMonth(calendarCursor.getMonth()-1);loadCalendar();});
-$('calendarNext').addEventListener('click',()=>{calendarCursor.setMonth(calendarCursor.getMonth()+1);loadCalendar();});
+$('calendarPrev').addEventListener('click',()=>{if(calendarView==='week')calendarCursor.setDate(calendarCursor.getDate()-7);else calendarCursor.setMonth(calendarCursor.getMonth()-1);loadCalendar();});
+$('calendarNext').addEventListener('click',()=>{if(calendarView==='week')calendarCursor.setDate(calendarCursor.getDate()+7);else calendarCursor.setMonth(calendarCursor.getMonth()+1);loadCalendar();});
+$('calendarToday').addEventListener('click',()=>{calendarCursor=new Date();if(calendarView!=='week')calendarCursor.setDate(1);loadCalendar();});
+document.querySelectorAll('[data-calendar-view]').forEach(button=>button.addEventListener('click',()=>{calendarView=button.dataset.calendarView;if(calendarView!=='week')calendarCursor.setDate(1);try{localStorage.setItem('igstudio.calendarView',calendarView);}catch{}loadCalendar();}));
 
 function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
 function analyticsPostLabel(item){return item.hook||item.title||'Sans hook enregistré';}
