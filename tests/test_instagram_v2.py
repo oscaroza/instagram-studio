@@ -230,6 +230,46 @@ def test_carousel_parent_uses_ordered_children(monkeypatch):
     assert payload["caption"] == "Caption carousel"
 
 
+def test_story_photo_container_uses_only_documented_story_fields(monkeypatch):
+    FakeAsyncClient.response = FakeResponse({"id": "story-container"})
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = asyncio.run(
+        instagram.create_story_container(
+            user_id="ig-user",
+            access_token="server-secret",
+            media_url="https://example.com/story.jpg",
+            media_type="image",
+        )
+    )
+
+    payload = FakeAsyncClient.last_request["data"]
+    assert result == "story-container"
+    assert payload["media_type"] == "STORIES"
+    assert payload["image_url"] == "https://example.com/story.jpg"
+    assert "video_url" not in payload
+    assert "caption" not in payload
+
+
+def test_story_video_container_uses_video_url(monkeypatch):
+    FakeAsyncClient.response = FakeResponse({"id": "story-video-container"})
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    asyncio.run(
+        instagram.create_story_container(
+            user_id="ig-user",
+            access_token="server-secret",
+            media_url="https://example.com/story.mp4",
+            media_type="video",
+        )
+    )
+
+    payload = FakeAsyncClient.last_request["data"]
+    assert payload["media_type"] == "STORIES"
+    assert payload["video_url"] == "https://example.com/story.mp4"
+    assert "image_url" not in payload
+
+
 def test_publish_carousel_accepts_ordered_images_and_videos(monkeypatch):
     created_items = []
     parent_children = []

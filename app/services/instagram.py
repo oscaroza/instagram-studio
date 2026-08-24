@@ -778,6 +778,57 @@ async def create_carousel_container(
 
 
 # ============================================================
+# PUBLICATION STORY
+# ============================================================
+
+async def create_story_container(
+    *,
+    user_id: str,
+    access_token: str,
+    media_url: str,
+    media_type: str,
+) -> str:
+    if not user_id:
+        raise InstagramError("INSTAGRAM_USER_ID vide.")
+    if not access_token:
+        raise InstagramError("INSTAGRAM_ACCESS_TOKEN vide.")
+    if not media_url.startswith(("https://", "http://")):
+        raise InstagramError(
+            "L’URL de la Story doit être publique et commencer par https:// ou http://."
+        )
+    normalized_type = str(media_type or "").strip().lower()
+    if normalized_type not in {"image", "video"}:
+        raise InstagramError("Une Story doit contenir une photo JPEG ou une vidéo.")
+
+    payload = {
+        "media_type": "STORIES",
+        "access_token": access_token,
+        "image_url" if normalized_type == "image" else "video_url": media_url,
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            api_url(f"{user_id}/media"),
+            data=payload,
+        )
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Création de la Story refusée par Meta. Vérifie que le compte autorise "
+            "la publication de Stories via API : "
+            f"{_safe_meta_error(response.text, access_token)}"
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse JSON invalide pour la Story."
+        ) from exc
+    creation_id = data.get("id")
+    if not creation_id:
+        raise InstagramError("Instagram n'a pas renvoyé de creation_id pour la Story.")
+    return str(creation_id)
+
+
+# ============================================================
 # PUBLICATION REEL (FLOW V1 CONSERVÉ)
 # ============================================================
 
@@ -1164,6 +1215,35 @@ async def publish_photo(
         "creation_id": creation_id,
         "media_id": media_id,
         "publication_mode": "photo",
+    }
+
+
+async def publish_story(
+    *,
+    user_id: str,
+    access_token: str,
+    media_url: str,
+    media_type: str,
+) -> dict[str, str]:
+    creation_id = await create_story_container(
+        user_id=user_id,
+        access_token=access_token,
+        media_url=media_url,
+        media_type=media_type,
+    )
+    await wait_until_ready(
+        creation_id=creation_id,
+        access_token=access_token,
+    )
+    media_id = await publish_container(
+        user_id=user_id,
+        access_token=access_token,
+        creation_id=creation_id,
+    )
+    return {
+        "creation_id": creation_id,
+        "media_id": media_id,
+        "publication_mode": "story",
     }
 
 

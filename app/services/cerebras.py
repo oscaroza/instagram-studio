@@ -45,6 +45,53 @@ ANALYTICS_SCHEMA = {
     "additionalProperties": False,
 }
 
+CONTENT_IDEAS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "diagnosis": {"type": "string"},
+        "ideas": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string"},
+                    "objective": {"type": "string"},
+                    "concept": {"type": "string"},
+                    "why_from_stats": {"type": "string"},
+                    "hook": {"type": "string"},
+                    "duration_seconds": {"type": "integer"},
+                    "shots": {"type": "array", "items": {"type": "string"}},
+                    "on_screen_text": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "cta": {"type": "string"},
+                    "caption_angle": {"type": "string"},
+                    "success_metric": {"type": "string"},
+                    "equipment": {"type": "string"},
+                },
+                "required": [
+                    "title",
+                    "objective",
+                    "concept",
+                    "why_from_stats",
+                    "hook",
+                    "duration_seconds",
+                    "shots",
+                    "on_screen_text",
+                    "cta",
+                    "caption_angle",
+                    "success_metric",
+                    "equipment",
+                ],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["diagnosis", "ideas"],
+    "additionalProperties": False,
+}
+
 STRICT_JSON_MODELS = {"openai/gpt-oss-20b", "openai/gpt-oss-120b"}
 
 
@@ -145,7 +192,7 @@ async def generate_caption(
     if not settings.cerebras_api_key:
         raise CerebrasError("CEREBRAS_API_KEY n'est pas configurée.")
 
-    system_prompt = """Tu es un assistant spécialisé dans les captions Instagram pour un créateur de contenu drone/FPV.
+    system_prompt = """Tu es un assistant spécialisé dans les captions Instagram pour un créateur de contenu photo et vidéo.
 Retourne UNIQUEMENT un objet JSON valide, sans markdown, de la forme :
 {
   "caption": "caption prête à poster",
@@ -155,14 +202,20 @@ Retourne UNIQUEMENT un objet JSON valide, sans markdown, de la forme :
   "notes": "une phrase très courte expliquant le choix"
 }
 Règles : naturel, pas de faux faits, pas de hashtags spammy, maximum 12 hashtags, emojis modérés, pas de clickbait mensonger.
-Si le lieu ou le drone n'est pas fourni, ne l'invente jamais."""
+Le champ « Appareil de prise de vue » est une contrainte physique et la source de vérité sur la façon dont le contenu a pu être filmé.
+- Si l'appareil est un iPhone, un smartphone ou une caméra tenue à la main, n'invente jamais de drone, de vol, de plan aérien, de vue du ciel ou de survol. Ces éléments ne sont permis que si la description ou les consignes indiquent explicitement que l'appareil était placé dans les airs (par exemple dans un avion, sur un drone ou depuis un point de vue en hauteur).
+- Si l'appareil est un drone ou un FPV, tu peux employer le vocabulaire aérien uniquement lorsqu'il est cohérent avec la description fournie.
+- Ne déduis jamais un angle de vue ou un mouvement de caméra à partir du seul ton demandé.
+- Applique ces contraintes à la caption, au hook, au texte alternatif, aux notes et aux hashtags.
+- Ne cite pas forcément le nom de l'appareil dans le texte : utilise-le d'abord pour éviter les descriptions impossibles.
+Si le lieu ou l'appareil n'est pas fourni, ne l'invente jamais."""
 
     user_prompt = f"""Crée une proposition pour ce contenu Instagram.
 Langue: {language}
 Ton: {tone}
 Description du contenu: {description}
 Lieu: {location or 'non fourni'}
-Drone/caméra: {drone or 'non fourni'}
+Appareil de prise de vue (contrainte physique): {drone or 'non fourni'}
 Consignes supplémentaires: {extra or 'aucune'}
 """
 
@@ -307,6 +360,102 @@ Utilise la comparaison de période et la croissance seulement quand elles contie
         if not isinstance(values, list):
             values = [values]
         result[key] = [str(value)[:600] for value in values[:8]]
+    return result
+
+
+async def generate_growth_content_ideas(
+    dashboard: dict[str, Any],
+    brief: str = "",
+) -> dict[str, Any]:
+    """Create actionable ideas without transmitting historical post text."""
+    if not settings.cerebras_api_key:
+        raise CerebrasError("CEREBRAS_API_KEY n'est pas configurée.")
+
+    cleaned_brief = brief.strip()[:800]
+    system_prompt = """Tu es un directeur créatif Instagram spécialisé dans la croissance durable d'un créateur photo, vidéo, drone et FPV.
+À partir des statistiques agrégées et du brief fournis, crée EXACTEMENT 3 idées de vidéos différentes et réalisables. Retourne UNIQUEMENT un objet JSON valide conforme au schéma demandé.
+
+But : donner une raison claire de s'abonner, commenter, partager ou enregistrer, sans mendier l'engagement et sans clickbait mensonger.
+
+Règles :
+- Chaque idée doit être précise et tournable : concept, hook des 2 premières secondes, durée, 4 à 7 plans ordonnés, textes à l'écran, CTA naturel, angle de caption, matériel et métrique principale à comparer.
+- Varie les mécanismes : au moins une idée humaine/coulisses ou pédagogique, une idée interactive/comparative et une idée qui conserve la force visuelle du drone sans être seulement un beau montage.
+- N'utilise les conclusions statistiques que si les données les soutiennent. Sinon, présente l'idée comme un test.
+- Ne promets jamais qu'une idée deviendra virale et ne présente pas une corrélation comme une causalité.
+- Respecte strictement le matériel, les lieux, le temps et les contraintes du brief. Un iPhone seul ne produit pas une vue aérienne, sauf situation en hauteur explicitement indiquée.
+- Le CTA doit apporter une contrepartie au spectateur : choix à faire, suite annoncée, ressource, comparaison ou utilité à sauvegarder.
+- Reste concis pour éviter une réponse tronquée : une courte phrase par champ et par plan."""
+    user_prompt = (
+        "Statistiques anonymisées :\n"
+        + json.dumps(_compact_analytics_data(dashboard), ensure_ascii=False)
+        + "\n\nBrief et contraintes du créateur :\n"
+        + (cleaned_brief or "Aucun brief supplémentaire. Propose des tests réalistes.")
+    )
+    payload = {
+        "model": settings.cerebras_model,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.45,
+        "max_completion_tokens": 4096,
+        "response_format": _response_format(
+            "instagram_growth_content_ideas", CONTENT_IDEAS_SCHEMA
+        ),
+        **_reasoning_options(),
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.cerebras_api_key}",
+        "Content-Type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            f"{settings.cerebras_base_url}/chat/completions",
+            json=payload,
+            headers=headers,
+        )
+    if response.status_code >= 400:
+        raise _groq_error(response)
+    try:
+        content = response.json()["choices"][0]["message"]["content"]
+    except (ValueError, KeyError, IndexError, TypeError) as exc:
+        raise CerebrasError("Réponse Groq inattendue.") from exc
+
+    result = _extract_json(content)
+    result["diagnosis"] = str(result.get("diagnosis") or "")[:1200]
+    normalized_ideas = []
+    for raw_idea in (result.get("ideas") or [])[:3]:
+        if not isinstance(raw_idea, dict):
+            continue
+        idea = {
+            key: str(raw_idea.get(key) or "")[:900]
+            for key in (
+                "title",
+                "objective",
+                "concept",
+                "why_from_stats",
+                "hook",
+                "cta",
+                "caption_angle",
+                "success_metric",
+                "equipment",
+            )
+        }
+        try:
+            idea["duration_seconds"] = max(
+                1, min(int(raw_idea.get("duration_seconds") or 0), 600)
+            )
+        except (TypeError, ValueError):
+            idea["duration_seconds"] = 30
+        for key in ("shots", "on_screen_text"):
+            values = raw_idea.get(key) or []
+            if not isinstance(values, list):
+                values = [values]
+            idea[key] = [str(value)[:500] for value in values[:7]]
+        normalized_ideas.append(idea)
+    if not normalized_ideas:
+        raise CerebrasError("Groq n’a renvoyé aucune idée exploitable.")
+    result["ideas"] = normalized_ideas
     return result
 
 

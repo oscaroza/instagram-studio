@@ -7,7 +7,7 @@ import cloudinary.exceptions
 
 from app.config import settings
 from app.routes import v2
-from app.services import local_media, publication_safety, token_store
+from app.services import local_media, publication_safety, scheduler, token_store
 from app.services.cloudinary_media import muted_video_url, safe_cloudinary_failure
 
 
@@ -201,6 +201,124 @@ def test_carousel_validation_accepts_videos_and_mixed_media():
     )
 
     assert [item["media_type"] for item in items] == ["image", "video"]
+
+
+def test_story_validation_accepts_one_photo_or_video():
+    for media_type, suffix in (("image", "jpg"), ("video", "mp4")):
+        items = v2.publication_media_items(
+            {
+                "media_items": [
+                    {
+                        "url": f"https://studio.example/story.{suffix}",
+                        "media_type": media_type,
+                    }
+                ]
+            },
+            "story",
+        )
+        assert items[0]["media_type"] == media_type
+
+
+def test_scheduled_story_is_saved_with_durable_media(monkeypatch):
+    inserted = []
+
+    class InsertResult:
+        inserted_id = "story-publication-id"
+
+    class Publications:
+        def insert_one(self, document):
+            inserted.append(document)
+            return InsertResult()
+
+    class Database:
+        publications = Publications()
+
+    monkeypatch.setattr(v2, "database_configured", lambda: True)
+    monkeypatch.setattr(v2, "database", lambda: Database())
+    future = v2.utc_now() + timedelta(days=1)
+    payload = {
+        "media_kind": "story",
+        "media_items": [
+            {
+                "url": "https://media.example.com/story.mp4",
+                "media_type": "video",
+                "library_id": "durable-story-media",
+            }
+        ],
+        "workflow": "auto_publish",
+        "publication_mode": "normal",
+        "scheduled_for": future.isoformat(),
+    }
+
+    result = asyncio.run(v2.create_publication(payload))
+
+    assert result["ok"] is True
+    assert result["publication"]["media_kind"] == "story"
+    assert result["publication"]["status"] == "scheduled"
+    assert inserted[0]["video_url"] == "https://media.example.com/story.mp4"
+
+
+def test_scheduler_publishes_due_story_with_story_container(monkeypatch):
+    updates = []
+    created = []
+
+    class Publications:
+        def update_one(self, query, update):
+            updates.append((query, update))
+
+    class Database:
+        publications = Publications()
+
+    async def credentials():
+        return "ig-user", "server-secret"
+
+    async def create_story(**kwargs):
+        created.append(kwargs)
+        return "story-container"
+
+    async def wait(**kwargs):
+        return None
+
+    async def publish(**kwargs):
+        return "story-media-id"
+
+    async def notify(**kwargs):
+        return 1
+
+    monkeypatch.setattr(scheduler, "database", lambda: Database())
+    monkeypatch.setattr(scheduler, "resolve_instagram_credentials", credentials)
+    monkeypatch.setattr(scheduler, "create_story_container", create_story)
+    monkeypatch.setattr(scheduler, "wait_until_ready", wait)
+    monkeypatch.setattr(scheduler, "publish_container", publish)
+    monkeypatch.setattr(scheduler, "send_notification", notify)
+
+    asyncio.run(
+        scheduler._process_publication(
+            {
+                "_id": "story-publication",
+                "title": "Story du soir",
+                "media_kind": "story",
+                "media_items": [
+                    {
+                        "url": "https://media.example.com/story.mp4",
+                        "media_type": "video",
+                    }
+                ],
+                "caption": "Note interne",
+            }
+        )
+    )
+
+    assert created == [
+        {
+            "user_id": "ig-user",
+            "access_token": "server-secret",
+            "media_url": "https://media.example.com/story.mp4",
+            "media_type": "video",
+        }
+    ]
+    assert any(update[1].get("$set", {}).get("creation_id") == "story-container" for update in updates)
+    assert any(update[1].get("$set", {}).get("status") == "published" for update in updates)
 
 
 def test_publication_claim_blocks_duplicate_until_released(monkeypatch):

@@ -447,6 +447,26 @@ def test_music_finalization_prepares_files_for_native_share():
     assert "instagram://camera" in script.text
 
 
+def test_story_composer_is_available_without_removing_existing_media_types():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+        enable_instagram_stories=True,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert '<option value="reel">Reel</option>' in page.text
+    assert 'value="story_photo"' in page.text
+    assert 'value="story_video"' in page.text
+    assert 'id="storyHelp"' in page.text
+    assert "mediaKind==='story'" in script.text
+    assert "Story •" in script.text
+
+
 def test_preflight_rejects_caption_over_instagram_limit():
     with temporary_settings(
         studio_access_code="test-only-code",
@@ -488,6 +508,9 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'id="statsSyncProgressBar"' in page.text
     assert 'id="analyzeStatsBtn"' in page.text
     assert 'id="statsAssistantReport"' in page.text
+    assert 'id="contentIdeasBrief"' in page.text
+    assert 'id="generateContentIdeasBtn"' in page.text
+    assert 'id="contentIdeasReport"' in page.text
     assert 'id="notifyLogin"' in page.text
     assert 'id="statsSort"' in page.text
     assert 'id="statsPeriod"' in page.text

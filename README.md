@@ -1,6 +1,6 @@
 # Instagram Studio V2
 
-Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos JPEG et carrousels photo/vidéo Instagram. La V2 conserve le flow de publication Reel immédiate de la V1 et l’OAuth Instagram direct.
+Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos JPEG, carrousels photo/vidéo et Stories Instagram. La V2 conserve le flow de publication Reel immédiate de la V1 et l’OAuth Instagram direct.
 
 ## Fonctionnalités
 
@@ -8,6 +8,7 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
 - publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 photos, vidéos, ou médias mixtes ;
+- publication immédiate ou programmée d’une Story photo JPEG ou vidéo, avec suivi dans le calendrier et notifications ;
 - calendrier mensuel, hebdomadaire et liste, avec déplacement des programmations par glisser-déposer ;
 - bibliothèque média Cloudflare R2 avec recherche, filtres par type/date/poids/utilisation, suppression manuelle et compatibilité des anciens médias Cloudinary ;
 - réorganisation des médias d’un carrousel par glisser-déposer, au doigt ou à la souris ;
@@ -16,11 +17,12 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - compteur Meta des publications API sur les dernières 24 heures ;
 - dashboard statistique avec comparaison sur 7, 30 ou 90 jours et courbe d’évolution fondée sur les relevés MongoDB ;
 - assistant Groq conversationnel dont l’historique reste dans MongoDB et n’est pas renvoyé automatiquement à Groq ;
+- générateur Groq de trois protocoles vidéo orientés croissance, fondés sur les statistiques anonymisées et un brief matériel/contraintes, avec sauvegarde du dernier plan dans MongoDB ;
 - connexion Face ID, Touch ID ou passkey WebAuthn, avec le code d’accès conservé comme secours ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement ;
 - vérification avant envoi et protection de 15 minutes contre une double publication identique.
 
-Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram. Ce workflow et le mode Trial restent réservés aux Reels.
+Le workflow musique crée un brouillon dans le Studio, copie le texte et ouvre Instagram : l’API Meta ne permet pas de choisir une musique ni de créer un brouillon natif dans l’app Instagram. Les Stories API sont publiées sans légende, musique, lien ou sticker interactif ; le texte doit être intégré directement dans leur image ou vidéo. `ENABLE_INSTAGRAM_STORIES=false` permet de masquer la capability si Meta refuse les Stories pour le compte connecté.
 
 Un upload destiné à une publication immédiate conserve le flow V1 et reste sur l’URL publique temporaire de Render. La copie R2 n’est créée qu’au moment où l’utilisateur confirme une programmation. Les fichiers de 16 Mo et plus utilisent automatiquement un envoi multipart. L’option **Couper le son** retire la piste audio avant le stockage R2. Les anciens documents Cloudinary continuent d’utiliser leur transformation `audio_codec: none`.
 
@@ -53,6 +55,7 @@ LOGIN_LOCKOUT_MINUTES=15
 CEREBRAS_API_KEY=TA_CLE_GROQ
 CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
 CEREBRAS_MODEL=openai/gpt-oss-20b
+ENABLE_INSTAGRAM_STORIES=true
 
 MONGODB_URI=mongodb+srv://UTILISATEUR:MOT_DE_PASSE_ENCODE@instagram-studio.kecpds1.mongodb.net/?retryWrites=true&w=majority&appName=instagram-studio
 MONGODB_DATABASE=instagram_studio
@@ -65,6 +68,7 @@ R2_BUCKET_NAME=instagram-studio
 R2_PUBLIC_BASE_URL=https://media.ton-domaine.com
 R2_FOLDER=instagram-studio
 CLOUDFLARE_ANALYTICS_API_TOKEN=...
+CLOUDFLARE_BILLING_API_TOKEN=...
 R2_MAX_STORAGE_GB=9
 
 # Garde ces variables tant qu’il reste d’anciens médias Cloudinary à supprimer.
@@ -87,8 +91,9 @@ Le mot de passe MongoDB doit être encodé pour une URL s’il contient des cara
 3. Dans **R2 → Manage API Tokens**, créer un token limité à ce bucket avec la permission **Object Read & Write**. Copier l’Access Key ID et la Secret Access Key dans Render ; le secret ne sera plus affiché ensuite.
 4. Dans le bucket, ouvrir **Settings → Public access** et connecter de préférence un domaine comme `media.ton-domaine.com`. L’URL `r2.dev` peut servir pour un test, mais Cloudflare la réserve au développement et la limite en débit.
 5. Mettre l’adresse HTTPS publique exacte, sans slash final, dans `R2_PUBLIC_BASE_URL`.
-6. Dans **Manage Account → API Tokens**, créer un token personnalisé séparé avec uniquement **Account → Account Analytics → Read**, limité à ton compte. Mettre sa valeur dans `CLOUDFLARE_ANALYTICS_API_TOKEN` sur Render. Ce token en lecture seule permet au Studio d’afficher les opérations mensuelles et n’est jamais envoyé au navigateur.
-7. Dans **Settings → CORS Policy**, ajouter la règle ci-dessous en remplaçant l’origine par l’adresse exacte du Studio Render, sans slash final :
+6. Dans **Manage Account → API Tokens**, créer un token personnalisé séparé avec uniquement **Account → Account Analytics → Read**, limité à ton compte. Mettre sa valeur dans `CLOUDFLARE_ANALYTICS_API_TOKEN` sur Render.
+7. Créer un second token en lecture seule avec **Account → Billing → Read**, limité au même compte, puis le mettre dans `CLOUDFLARE_BILLING_API_TOKEN`. Le Studio utilise ce token pour récupérer le cycle réel de facturation et, lorsque l’endpoint Billing Usage est disponible pour le compte, les compteurs qui alimentent la facturation. Si cet endpoint Cloudflare encore restreint refuse l’accès, l’interface l’indique et affiche uniquement Analytics sur la période de facturation comme valeur de secours clairement identifiée. Aucun de ces tokens n’est envoyé au navigateur.
+8. Dans **Settings → CORS Policy**, ajouter la règle ci-dessous en remplaçant l’origine par l’adresse exacte du Studio Render, sans slash final :
 
 ```json
 [

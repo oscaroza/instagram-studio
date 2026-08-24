@@ -13,6 +13,7 @@ from app.services.instagram import (
     create_carousel_item_container,
     create_image_container,
     create_reel_container,
+    create_story_container,
     publish_container,
     wait_until_ready,
 )
@@ -195,6 +196,17 @@ async def _process_publication(publication: dict) -> None:
                     image_url=image_url,
                     caption=publication.get("caption", ""),
                 )
+            elif media_kind == "story":
+                if not settings.enable_instagram_stories:
+                    raise InstagramError("Les Stories sont désactivées sur ce déploiement.")
+                if not media_items:
+                    raise InstagramError("Le média de la Story est introuvable.")
+                creation_id = await create_story_container(
+                    user_id=user_id,
+                    access_token=access_token,
+                    media_url=media_items[0]["url"],
+                    media_type=media_items[0]["media_type"],
+                )
             elif media_kind == "carousel":
                 children: list[str] = []
                 for item in media_items:
@@ -254,6 +266,7 @@ async def _process_publication(publication: dict) -> None:
         type_label = {
             "photo": "Photo",
             "carousel": "Carrousel",
+            "story": "Story",
         }.get(media_kind, "Reel")
         await send_notification(
             preference="published",

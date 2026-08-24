@@ -57,16 +57,28 @@ def publication_checks(
         raise ValueError("Le mode Trial est réservé aux Reels.")
     if workflow not in {"auto_publish", "manual_music"}:
         raise ValueError("Workflow de publication invalide.")
+    if media_kind == "story" and workflow != "auto_publish":
+        raise ValueError(
+            "La musique et les stickers de Story ne sont pas disponibles via l’API Meta."
+        )
 
-    type_label = {"reel": "Reel", "photo": "Photo", "carousel": "Carrousel"}[
-        media_kind
-    ]
+    type_label = {
+        "reel": "Reel",
+        "photo": "Photo",
+        "carousel": "Carrousel",
+        "story": "Story",
+    }[media_kind]
     checks = [f"{type_label} • {len(media_items)} média(s) valide(s)"]
-    checks.append(
-        f"Légende prête • {len(caption)} / 2 200 caractères"
-        if caption
-        else "Publication sans légende"
-    )
+    if media_kind == "story":
+        checks.append(
+            "Texte conservé comme note dans le Studio — Meta ne publie pas de légende sur une Story"
+        )
+    else:
+        checks.append(
+            f"Légende prête • {len(caption)} / 2 200 caractères"
+            if caption
+            else "Publication sans légende"
+        )
     checks.append(
         "Finalisation manuelle dans Instagram pour la musique"
         if workflow == "manual_music"

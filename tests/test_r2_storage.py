@@ -32,10 +32,9 @@ R2_SETTINGS = {
 
 
 class FakeAnalyticsResponse:
-    status_code = 200
-
-    def __init__(self, payload):
+    def __init__(self, payload, status_code=200):
         self.payload = payload
+        self.status_code = status_code
 
     def json(self):
         return self.payload
@@ -49,6 +48,20 @@ class FakeAnalyticsClient:
     def post(self, url, headers, json):
         self.request = {"url": url, "headers": headers, "json": json}
         return FakeAnalyticsResponse(self.payload)
+
+
+class FakeBillingClient:
+    def __init__(self, usage_payload, subscriptions_payload=None, usage_status=200):
+        self.usage_payload = usage_payload
+        self.subscriptions_payload = subscriptions_payload or {"success": True, "result": []}
+        self.usage_status = usage_status
+        self.requests = []
+
+    def get(self, url, headers, params):
+        self.requests.append({"url": url, "headers": headers, "params": params})
+        if url.endswith("/billable/usage"):
+            return FakeAnalyticsResponse(self.usage_payload, self.usage_status)
+        return FakeAnalyticsResponse(self.subscriptions_payload)
 
 
 class FakeR2Client:
@@ -157,17 +170,47 @@ def test_r2_dashboard_classifies_monthly_operations_and_storage():
         }
     }
     analytics_client = FakeAnalyticsClient(payload)
+    billing_client = FakeBillingClient(
+        {
+            "success": True,
+            "result": [
+                {
+                    "x_ProductFamilyName": "R2",
+                    "x_BillableMetricId": "r2_class_a_operations",
+                    "ConsumedQuantity": 150,
+                    "BillingPeriodStart": "2026-08-24T00:00:00Z",
+                    "BillingPeriodEnd": "2026-09-24T00:00:00Z",
+                    "BilledCost": 0,
+                    "BillingCurrency": "USD",
+                },
+                {
+                    "x_ProductFamilyName": "R2",
+                    "x_BillableMetricName": "R2 Class B Operations",
+                    "ConsumedQuantity": 5000,
+                    "BillingPeriodStart": "2026-08-24T00:00:00Z",
+                    "BillingPeriodEnd": "2026-09-24T00:00:00Z",
+                    "BilledCost": 0,
+                    "BillingCurrency": "USD",
+                },
+            ],
+        }
+    )
     with temporary_settings(
         **R2_SETTINGS,
         cloudflare_analytics_api_token="analytics-secret-token",
+        cloudflare_billing_api_token="billing-secret-token",
     ):
         result = cloudflare_usage.r2_usage_summary(
             now=cloudflare_usage.datetime(2026, 8, 24, tzinfo=cloudflare_usage.timezone.utc),
             analytics_client=analytics_client,
+            billing_client=billing_client,
             storage_client=FakeR2Client(usage=2_000_000_000),
         )
 
     assert result["analytics_ready"] is True
+    assert result["billing_ready"] is True
+    assert result["billing_authoritative"] is True
+    assert result["usage_source"] == "cloudflare_billing"
     assert result["class_a"]["used"] == 150
     assert result["class_a"]["remaining"] == 999_850
     assert result["class_b"]["used"] == 5000
@@ -176,24 +219,105 @@ def test_r2_dashboard_classifies_monthly_operations_and_storage():
     assert result["bucket_storage_bytes"] == 2_000_000_000
     assert result["account_storage_bytes"] == 2_400_002_000
     assert analytics_client.request["headers"]["Authorization"] == "Bearer analytics-secret-token"
-    assert analytics_client.request["json"]["variables"]["startDate"].startswith("2026-08-01")
+    assert analytics_client.request["json"]["variables"]["startDate"].startswith("2026-08-24")
+    assert billing_client.requests[0]["headers"]["Authorization"] == "Bearer billing-secret-token"
+
+
+def test_r2_dashboard_falls_back_to_analytics_on_verified_billing_cycle():
+    analytics_client = FakeAnalyticsClient(
+        {
+            "data": {
+                "viewer": {
+                    "accounts": [
+                        {
+                            "operations": [
+                                {
+                                    "sum": {"requests": 73},
+                                    "dimensions": {"actionType": "PutObject"},
+                                },
+                                {
+                                    "sum": {"requests": 14},
+                                    "dimensions": {"actionType": "GetObject"},
+                                },
+                            ],
+                            "storage": [],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    billing_client = FakeBillingClient(
+        {"errors": [{"message": "restricted"}], "success": False},
+        {
+            "success": True,
+            "result": [
+                {
+                    "frequency": "monthly",
+                    "state": "Provisioned",
+                    "current_period_start": "2026-08-24T00:00:00Z",
+                    "current_period_end": "2026-09-24T00:00:00Z",
+                    "rate_plan": {"id": "r2", "public_name": "R2 Object Storage"},
+                }
+            ],
+        },
+        usage_status=403,
+    )
+    with temporary_settings(
+        **R2_SETTINGS,
+        cloudflare_analytics_api_token="analytics-secret-token",
+        cloudflare_billing_api_token="billing-secret-token",
+    ):
+        result = cloudflare_usage.r2_usage_summary(
+            now=cloudflare_usage.datetime(2026, 8, 24, 12, tzinfo=cloudflare_usage.timezone.utc),
+            analytics_client=analytics_client,
+            billing_client=billing_client,
+            storage_client=FakeR2Client(),
+        )
+
+    assert result["billing_ready"] is False
+    assert result["billing_period_ready"] is True
+    assert result["billing_authoritative"] is False
+    assert result["usage_source"] == "analytics_billing_period"
+    assert result["class_a"]["used"] == 73
+    assert result["class_b"]["used"] == 14
+    assert analytics_client.request["json"]["variables"]["startDate"].startswith("2026-08-24")
 
 
 def test_r2_dashboard_never_returns_analytics_token_in_errors():
     client = FakeAnalyticsClient(
         {"errors": [{"message": "invalid analytics-secret-token for account-id"}]}
     )
+    billing_client = FakeBillingClient(
+        {
+            "success": True,
+            "result": [
+                {
+                    "x_ProductFamilyName": "R2",
+                    "x_BillableMetricName": "R2 Class A Operations",
+                    "ConsumedQuantity": 1,
+                    "BillingPeriodStart": "2026-08-24T00:00:00Z",
+                    "BillingPeriodEnd": "2026-09-24T00:00:00Z",
+                }
+            ],
+        }
+    )
     with temporary_settings(
         **R2_SETTINGS,
         cloudflare_analytics_api_token="analytics-secret-token",
+        cloudflare_billing_api_token="billing-secret-token",
     ):
         result = cloudflare_usage.r2_usage_summary(
+            now=cloudflare_usage.datetime(2026, 8, 24, 12, tzinfo=cloudflare_usage.timezone.utc),
             analytics_client=client,
+            billing_client=billing_client,
             storage_client=FakeR2Client(),
         )
 
     assert result["analytics_ready"] is False
+    assert result["analytics_error"]
     assert "analytics-secret-token" not in result["analytics_error"]
+    assert "billing-secret-token" not in result["analytics_error"]
     assert "account-id" not in result["analytics_error"]
 
 

@@ -14,12 +14,14 @@ from app.services.analytics import (
     list_assistant_messages,
     save_assistant_exchange,
     save_analytics_report,
+    save_content_ideas,
     sync_instagram_analytics,
 )
 from app.services.cerebras import (
     CerebrasError,
     analyze_instagram_performance,
     chat_instagram_performance,
+    generate_growth_content_ideas,
 )
 from app.services.cloudflare_usage import r2_usage_summary
 from app.services.database import (
@@ -137,6 +139,16 @@ def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, st
                 "media_type": "image",
             }
         ]
+    elif media_kind == "story" and not raw_items:
+        story_media_type = str(payload.get("story_media_type", "image")).lower()
+        raw_items = [
+            {
+                "url": payload.get("video_url") or payload.get("image_url", ""),
+                "library_id": payload.get("library_id", ""),
+                "thumbnail_url": payload.get("thumbnail_url", ""),
+                "media_type": story_media_type,
+            }
+        ]
 
     expected_type = "video" if media_kind == "reel" else "image"
     items: list[dict[str, str]] = []
@@ -148,7 +160,9 @@ def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, st
             raise ValueError("Chaque média doit avoir une URL publique.")
         media_type = str(raw_item.get("media_type", expected_type)).lower()
         allowed_types = (
-            {"image", "video"} if media_kind == "carousel" else {expected_type}
+            {"image", "video"}
+            if media_kind in {"carousel", "story"}
+            else {expected_type}
         )
         if media_type not in allowed_types:
             raise ValueError("Le type d’un média ne correspond pas à la publication.")
@@ -206,6 +220,7 @@ async def v2_status():
         "media_storage_limit_bytes": storage_limit_bytes,
         "push_ready": push_configured(),
         "trial_reels_enabled": settings.enable_trial_reels,
+        "stories_enabled": settings.enable_instagram_stories,
     }
 
 
@@ -502,6 +517,41 @@ async def run_analytics_assistant(period_days: int = 30):
     return {"ok": True, "report": report, "model": settings.cerebras_model}
 
 
+@router.post("/analytics/content-ideas")
+async def create_growth_content_ideas(payload: dict, period_days: int = 30):
+    brief = str(payload.get("brief") or "").strip()
+    if len(brief) > 800:
+        return api_error("Le brief est trop long (800 caractères maximum).")
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        dashboard = await asyncio.to_thread(
+            build_analytics_dashboard,
+            period_days=period_days,
+        )
+        summary = dashboard.get("summary") or {}
+        if int(summary.get("media_count", 0)) < 3:
+            return api_error(
+                "Synchronise au moins 3 publications avant de générer des idées.",
+                409,
+            )
+        report = await generate_growth_content_ideas(dashboard, brief)
+        await asyncio.to_thread(
+            save_content_ideas,
+            report,
+            brief,
+            (dashboard.get("sync") or {}).get("last_synced_at"),
+            settings.cerebras_model,
+        )
+    except CerebrasError as exc:
+        return api_error(str(exc), 502)
+    except AnalyticsError as exc:
+        return api_error(str(exc), 409)
+    except Exception:
+        return api_error("Générateur d’idées temporairement indisponible.", 503)
+    return {"ok": True, "report": report, "model": settings.cerebras_model}
+
+
 @router.get("/analytics/assistant/chat")
 async def analytics_assistant_history():
     try:
@@ -559,8 +609,10 @@ async def delete_analytics_assistant_history():
 @router.post("/publications/preflight")
 async def publication_preflight(payload: dict):
     media_kind = str(payload.get("media_kind", "reel")).strip().lower()
-    if media_kind not in {"reel", "photo", "carousel"}:
+    if media_kind not in {"reel", "photo", "carousel", "story"}:
         return api_error("Type de publication invalide.")
+    if media_kind == "story" and not settings.enable_instagram_stories:
+        return api_error("Les Stories sont désactivées sur ce déploiement.", 409)
     try:
         media_items = publication_media_items(payload, media_kind)
         caption = str(payload.get("caption", "")).strip()
@@ -834,8 +886,10 @@ async def create_publication(payload: dict):
         return api_error("MONGODB_URI n’est pas configurée.", 503)
 
     media_kind = str(payload.get("media_kind", "reel")).strip().lower()
-    if media_kind not in {"reel", "photo", "carousel"}:
+    if media_kind not in {"reel", "photo", "carousel", "story"}:
         return api_error("Type de publication invalide.")
+    if media_kind == "story" and not settings.enable_instagram_stories:
+        return api_error("Les Stories sont désactivées sur ce déploiement.", 409)
     try:
         media_items = publication_media_items(payload, media_kind)
     except ValueError as exc:
@@ -843,7 +897,12 @@ async def create_publication(payload: dict):
 
     library_ids = [item["library_id"] for item in media_items if item["library_id"]]
     library_id = library_ids[0] if len(library_ids) == 1 else None
-    mute_audio = bool(payload.get("mute_audio")) if media_kind == "reel" else False
+    mute_audio = (
+        bool(payload.get("mute_audio"))
+        if media_kind == "reel"
+        or (media_kind == "story" and media_items[0]["media_type"] == "video")
+        else False
+    )
 
     publication_mode = str(payload.get("publication_mode", "normal")).lower()
     if publication_mode not in {"normal", "trial"}:
@@ -856,6 +915,10 @@ async def create_publication(payload: dict):
     workflow = str(payload.get("workflow", "auto_publish")).lower()
     if workflow not in {"auto_publish", "manual_music"}:
         return api_error("Workflow de publication invalide.")
+    if media_kind == "story" and workflow != "auto_publish":
+        return api_error(
+            "La musique et les stickers de Story ne sont pas disponibles via l’API Meta."
+        )
 
     caption = str(payload.get("caption", "")).strip()
     scheduled_text = str(payload.get("scheduled_for", "")).strip()
@@ -929,6 +992,8 @@ async def create_publication(payload: dict):
         await asyncio.to_thread(release_publication_claim, dedupe_key)
         return api_error("Une date est requise pour programmer cette publication.")
 
+    is_story_video = media_kind == "story" and media_items[0]["media_type"] == "video"
+    is_story_image = media_kind == "story" and media_items[0]["media_type"] == "image"
     document = {
         "title": str(payload.get("title", "Publication Instagram")).strip()[:120]
         or "Publication Instagram",
@@ -936,8 +1001,8 @@ async def create_publication(payload: dict):
         "media_items": media_items,
         "library_ids": library_ids,
         "library_id": library_id,
-        "video_url": media_items[0]["url"] if media_kind == "reel" else "",
-        "image_url": media_items[0]["url"] if media_kind == "photo" else "",
+        "video_url": media_items[0]["url"] if media_kind == "reel" or is_story_video else "",
+        "image_url": media_items[0]["url"] if media_kind == "photo" or is_story_image else "",
         "thumbnail_url": media_items[0].get("thumbnail_url", ""),
         "caption": caption,
         "hook": str(payload.get("hook", "")).strip(),

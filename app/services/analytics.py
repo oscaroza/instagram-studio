@@ -718,6 +718,7 @@ def build_analytics_dashboard(
         )
     state = db.analytics_state.find_one({"_id": "primary"}) or {}
     report = db.analytics_reports.find_one({"_id": "latest"}) or {}
+    content_ideas = db.analytics_reports.find_one({"_id": "content_ideas_latest"}) or {}
     now = utc_now().astimezone(timezone.utc)
     snapshot_collection = getattr(db, "instagram_insight_snapshots", None)
     snapshots = (
@@ -757,6 +758,9 @@ def build_analytics_dashboard(
         },
         "assistant_report": report.get("report"),
         "assistant_report_created_at": _iso(report.get("created_at")),
+        "content_ideas": content_ideas.get("report"),
+        "content_ideas_created_at": _iso(content_ideas.get("created_at")),
+        "content_ideas_brief": str(content_ideas.get("brief") or ""),
     }
 
 
@@ -770,6 +774,27 @@ def save_analytics_report(
         {
             "$set": {
                 "report": report,
+                "based_on_sync_at": based_on_sync_at,
+                "model": model,
+                "created_at": utc_now(),
+            }
+        },
+        upsert=True,
+    )
+
+
+def save_content_ideas(
+    report: dict[str, Any],
+    brief: str,
+    based_on_sync_at: str | None,
+    model: str,
+) -> None:
+    database().analytics_reports.update_one(
+        {"_id": "content_ideas_latest"},
+        {
+            "$set": {
+                "report": report,
+                "brief": brief.strip()[:800],
                 "based_on_sync_at": based_on_sync_at,
                 "model": model,
                 "created_at": utc_now(),

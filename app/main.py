@@ -47,6 +47,7 @@ from app.services.instagram import (
     publish_carousel,
     publish_photo,
     publish_reel,
+    publish_story,
 )
 from app.routes.v2 import publication_media_items, router as v2_router
 from app.services.media_storage import (
@@ -463,6 +464,7 @@ async def home(
             "publishing_capabilities": publishing_capabilities(),
             "v2_modules": V2_MODULES,
             "trial_reels_enabled": settings.enable_trial_reels,
+            "stories_enabled": settings.enable_instagram_stories,
             "mongodb_ready": database_configured(),
             "media_storage_ready": media_storage_configured(),
             "media_storage_label": storage_provider_label(),
@@ -761,8 +763,10 @@ async def instagram_publish(
     ).strip()
 
     media_kind = str(payload.get("media_kind", "reel")).strip().lower()
-    if media_kind not in {"reel", "photo", "carousel"}:
+    if media_kind not in {"reel", "photo", "carousel", "story"}:
         return json_error("Type de publication Instagram invalide.")
+    if media_kind == "story" and not settings.enable_instagram_stories:
+        return json_error("Les Stories sont désactivées sur ce déploiement.", 409)
     try:
         media_items = publication_media_items(payload, media_kind)
     except ValueError as exc:
@@ -828,6 +832,13 @@ async def instagram_publish(
                 image_url=media_items[0]["url"],
                 caption=caption,
             )
+        elif media_kind == "story":
+            result = await publish_story(
+                user_id=user_id,
+                access_token=access_token,
+                media_url=media_items[0]["url"],
+                media_type=media_items[0]["media_type"],
+            )
         elif media_kind == "carousel":
             result = await publish_carousel(
                 user_id=user_id,
@@ -848,21 +859,31 @@ async def instagram_publish(
             library_ids = [
                 item["library_id"] for item in media_items if item["library_id"]
             ]
+            is_story_video = (
+                media_kind == "story" and media_items[0]["media_type"] == "video"
+            )
+            is_story_image = (
+                media_kind == "story" and media_items[0]["media_type"] == "image"
+            )
             document = {
                 "title": str(payload.get("title", "Publication Instagram"))[:120],
                 "media_kind": media_kind,
                 "media_items": media_items,
                 "library_ids": library_ids,
                 "library_id": library_ids[0] if len(library_ids) == 1 else None,
-                "video_url": media_items[0]["url"] if media_kind == "reel" else "",
-                "image_url": media_items[0]["url"] if media_kind == "photo" else "",
+                "video_url": media_items[0]["url"] if media_kind == "reel" or is_story_video else "",
+                "image_url": media_items[0]["url"] if media_kind == "photo" or is_story_image else "",
                 "thumbnail_url": media_items[0].get("thumbnail_url", ""),
                 "caption": caption,
                 "hook": str(payload.get("hook", "")),
                 "alt_text": str(payload.get("alt_text", "")),
                 "publication_mode": publication_mode,
                 "workflow": "auto_publish",
-                "mute_audio": bool(payload.get("mute_audio")) if media_kind == "reel" else False,
+                "mute_audio": (
+                    bool(payload.get("mute_audio"))
+                    if media_kind == "reel" or is_story_video
+                    else False
+                ),
                 "status": "published",
                 "dedupe_key": dedupe_key,
                 "creation_id": result.get("creation_id"),

@@ -426,27 +426,32 @@ function clearMediaSelection(){
 function configureMediaKind(clear=true){
   const kind=$('mediaKind').value,file=$('videoFile');
   if(clear)clearMediaSelection();
-  if(kind==='reel'){
+  if(kind==='reel'||kind==='story_video'){
     file.accept='video/mp4,video/quicktime,video/x-m4v';file.multiple=false;
-    $('mediaUploadLabel').textContent='Choisir une vidéo';$('mediaUploadHelp').textContent='MP4 / MOV / M4V';$('mediaUrlLabel').textContent='URL vidéo publique';
+    $('mediaUploadLabel').textContent=kind==='story_video'?'Choisir la vidéo de la Story':'Choisir une vidéo';$('mediaUploadHelp').textContent='MP4 / MOV / M4V';$('mediaUrlLabel').textContent=kind==='story_video'?'URL publique de la Story vidéo':'URL vidéo publique';
   }else if(kind==='carousel_video'){
     file.accept='video/mp4,video/quicktime,video/x-m4v';file.multiple=true;
     $('mediaUploadLabel').textContent='Choisir 2 à 10 vidéos';$('mediaUploadHelp').textContent=`MP4 / MOV / M4V • max ${document.body.dataset.maxUploadMb||250} Mo par vidéo`;$('mediaUrlLabel').textContent='URL vidéo publique';
   }else{
     file.accept='image/jpeg';file.multiple=isCarouselMode(kind);
-    $('mediaUploadLabel').textContent=kind==='carousel'?'Choisir 2 à 10 photos':'Choisir une photo';$('mediaUploadHelp').textContent='JPG / JPEG • 8 Mo max par photo';$('mediaUrlLabel').textContent='URL photo JPEG publique';
+    $('mediaUploadLabel').textContent=kind==='carousel'?'Choisir 2 à 10 photos':kind==='story_photo'?'Choisir la photo de la Story':'Choisir une photo';$('mediaUploadHelp').textContent='JPG / JPEG • 8 Mo max par photo';$('mediaUrlLabel').textContent=kind==='story_photo'?'URL publique de la Story photo':'URL photo JPEG publique';
   }
   $('publicUrlBlock').classList.toggle('hidden',isCarouselMode(kind));
   $('publicationModeField').classList.toggle('hidden',kind!=='reel');
-  $('muteOption').classList.toggle('hidden',kind!=='reel');
-  if(kind!=='reel'){$('publicationMode').value='normal';$('muteAudio').checked=false;}
+  const storyMode=kind==='story_photo'||kind==='story_video';
+  $('musicOption').classList.toggle('hidden',storyMode);
+  $('storyHelp').classList.toggle('hidden',!storyMode);
+  $('muteOption').classList.toggle('hidden',kind!=='reel'&&kind!=='story_video');
+  if(kind!=='reel')$('publicationMode').value='normal';
+  if(kind!=='reel'&&kind!=='story_video')$('muteAudio').checked=false;
+  if(storyMode)$('musicEnabled').checked=false;
   $('carouselOrderHelp').classList.toggle('hidden',!isCarouselMode(kind)||selectedMediaItems.length<2);
   updatePublicationOptions();
 }
 $('mediaKind').addEventListener('change',()=>configureMediaKind(true));
 $('videoFile').addEventListener('change',async(e)=>{
   const fileInput=e.currentTarget,files=[...fileInput.files];if(!files.length)return;
-  const kind=$('mediaKind').value,expected=kind==='reel'||kind==='carousel_video'?'video':'image';
+  const kind=$('mediaKind').value,expected=kind==='reel'||kind==='carousel_video'||kind==='story_video'?'video':'image';
   if(isCarouselMode(kind)&&selectedMediaItems.length+files.length>10){setNotice('uploadProgress','Un carrousel contient au maximum 10 médias.','error');fileInput.value='';return;}
   if(!isCarouselMode(kind))selectedMediaItems=[];
   const totalBytes=files.reduce((total,file)=>total+file.size,0);
@@ -470,7 +475,7 @@ $('videoFile').addEventListener('change',async(e)=>{
       syncMediaFields();renderSelectedMedia();
     }
     syncMediaFields();renderSelectedMedia();
-    const label=isCarouselMode(kind)?`${selectedMediaItems.length} ${kind==='carousel_video'?'vidéos':'photos'} prêtes`:`${kind==='photo'?'Photo':'Vidéo'} prête`;
+    const label=isCarouselMode(kind)?`${selectedMediaItems.length} ${kind==='carousel_video'?'vidéos':'photos'} prêtes`:kind==='photo'||kind==='story_photo'?'Photo prête':'Vidéo prête';
     hideUploadTransfer();
     setNotice('uploadProgress',`${label} avec une URL publique temporaire.`,'success');
   }catch(err){hideUploadTransfer();setNotice('uploadProgress',err.message,'error');}
@@ -519,7 +524,7 @@ function renderDrafts(){
 
 function updatePublicationOptions(){
   const scheduled=$('scheduleEnabled').checked,music=$('musicEnabled').checked,kind=$('mediaKind').value;
-  const typeLabel={reel:'le Reel',photo:'la photo',carousel:'le carrousel photo',carousel_video:'le carrousel vidéo'}[kind];
+  const typeLabel={reel:'le Reel',photo:'la photo',carousel:'le carrousel photo',carousel_video:'le carrousel vidéo',story_photo:'la Story photo',story_video:'la Story vidéo'}[kind];
   $('scheduleFields').classList.toggle('hidden',!scheduled);
   $('musicHelp').classList.toggle('hidden',!music);
   $('publishBtn').textContent=scheduled?`Programmer ${typeLabel}`:music?'Finaliser dans Instagram':`Publier ${typeLabel}`;
@@ -530,16 +535,18 @@ $('musicEnabled').addEventListener('change',updatePublicationOptions);
 
 function publicationPayload(){
   const fullCaption=[$('hook').value.trim(),$('caption').value.trim(),$('hashtags').value.trim()].filter(Boolean).join('\n\n');
-  const selectedKind=$('mediaKind').value,mediaKind=selectedKind==='carousel_video'?'carousel':selectedKind;
+  const selectedKind=$('mediaKind').value,mediaKind=selectedKind==='carousel_video'?'carousel':selectedKind==='story_photo'||selectedKind==='story_video'?'story':selectedKind;
   let items=selectedMediaItems.map(item=>({...item}));
   const publicUrl=$('videoUrl').value.trim();
   if(!isCarouselMode(selectedKind)&&publicUrl&&(!items.length||items[0].url!==publicUrl)){
-    items=[{url:publicUrl,library_id:$('libraryId').value,thumbnail_url:$('thumbnailUrl').value,media_type:mediaKind==='reel'?'video':'image',name:mediaKind==='reel'?'Vidéo par URL':'Photo par URL'}];
+    const urlMediaType=mediaKind==='reel'||selectedKind==='story_video'?'video':'image';
+    items=[{url:publicUrl,library_id:$('libraryId').value,thumbnail_url:$('thumbnailUrl').value,media_type:urlMediaType,name:urlMediaType==='video'?'Vidéo par URL':'Photo par URL'}];
   }
   return {
     title:($('location').value||$('description').value||'Publication Instagram').trim(),
     media_kind:mediaKind,media_items:items,
-    video_url:mediaKind==='reel'?(items[0]?.url||''):'',image_url:mediaKind==='photo'?(items[0]?.url||''):'',library_id:items[0]?.library_id||'',
+    video_url:mediaKind==='reel'||mediaKind==='story'&&items[0]?.media_type==='video'?(items[0]?.url||''):'',image_url:mediaKind==='photo'||mediaKind==='story'&&items[0]?.media_type==='image'?(items[0]?.url||''):'',library_id:items[0]?.library_id||'',
+    story_media_type:mediaKind==='story'?(items[0]?.media_type||''):'',
     thumbnail_url:$('thumbnailUrl').value,caption:fullCaption,hook:$('hook').value.trim(),
     alt_text:$('altText').value.trim(),publication_mode:$('publicationMode').value,
     workflow:$('musicEnabled').checked?'manual_music':'auto_publish',
@@ -557,7 +564,7 @@ $('publishBtn').addEventListener('click',async()=>{
     if(!$('scheduledFor').value){setNotice('actionMessage','Choisis la date et l’heure.','error');return;}
     payload.scheduled_for=new Date($('scheduledFor').value).toISOString();
   }
-  const kindLabel={reel:'ce Reel',photo:'cette photo',carousel:'ce carrousel'}[payload.media_kind];
+  const kindLabel={reel:'ce Reel',photo:'cette photo',carousel:'ce carrousel',story:'cette Story'}[payload.media_kind];
   const question=scheduled?'Programmer cette publication ?':music?`Préparer ${kindLabel} pour Instagram ?`:`Publier ${kindLabel} maintenant sur Instagram ?`;
   const btn=$('publishBtn');btn.disabled=true;const oldLabel=btn.textContent;btn.textContent='Vérification…';hideNotice('preflightNotice');
   try{
@@ -580,6 +587,11 @@ $('publishBtn').addEventListener('click',async()=>{
       payload.thumbnail_url=durableItems[0]?.thumbnail_url||'';
       if(payload.media_kind==='reel')payload.video_url=durableItems[0].url;
       if(payload.media_kind==='photo')payload.image_url=durableItems[0].url;
+      if(payload.media_kind==='story'){
+        payload.story_media_type=durableItems[0].media_type;
+        if(durableItems[0].media_type==='video')payload.video_url=durableItems[0].url;
+        else payload.image_url=durableItems[0].url;
+      }
     }
     if(scheduled||music){
       const data=await api('/api/publications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -589,7 +601,7 @@ $('publishBtn').addEventListener('click',async()=>{
       }
       return data;
     }
-    if(payload.media_kind==='reel'&&payload.mute_audio){
+    if((payload.media_kind==='reel'||payload.media_kind==='story'&&payload.media_items[0]?.media_type==='video')&&payload.mute_audio){
       setNotice('actionMessage','Création de la version sans son…');
       const muted=await api('/api/media/mute',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({video_url:payload.video_url,library_id:payload.library_id})});
       payload.video_url=muted.url;
@@ -751,25 +763,30 @@ async function loadR2Usage(){
     const storageRemaining=renderR2Quota('r2Storage',displayedStorage,usage.free_storage_bytes||10000000000,formatR2Storage);
     $('r2StorageRemaining').textContent=`${formatR2Storage(storageRemaining)} avant 10 Go • uploads bloqués à ${formatR2Storage(usage.studio_storage_limit_bytes||9000000000)}`;
     if(Number(displayedStorage)/(Number(usage.free_storage_bytes)||10000000000)>=.8)alerts.push('Le stockage R2 dépasse 80 % du quota gratuit.');
-    if(usage.analytics_ready){
+    if(usage.billing_ready||usage.analytics_ready&&usage.billing_period_ready){
       const remainingA=renderR2Quota('r2ClassA',usage.class_a?.used,usage.class_a?.limit||1000000,formatStat);
       const remainingB=renderR2Quota('r2ClassB',usage.class_b?.used,usage.class_b?.limit||10000000,formatStat);
-      $('r2ClassARemaining').textContent=`${formatStat(remainingA)} restantes • écritures et listes`;
-      $('r2ClassBRemaining').textContent=`${formatStat(remainingB)} restantes • lectures`;
+      const sourceSuffix=usage.billing_authoritative?'facturation Cloudflare':'Analytics aligné au cycle';
+      $('r2ClassARemaining').textContent=`${formatStat(remainingA)} restantes • ${sourceSuffix}`;
+      $('r2ClassBRemaining').textContent=`${formatStat(remainingB)} restantes • ${sourceSuffix}`;
       if(Number(usage.class_a?.percent)>=80)alerts.push('Les opérations de classe A dépassent 80 % du quota gratuit.');
       if(Number(usage.class_b?.percent)>=80)alerts.push('Les opérations de classe B dépassent 80 % du quota gratuit.');
       const unknown=Number(usage.unknown_operations)||0;
       if(unknown)alerts.push(`${formatStat(unknown)} opération(s) Cloudflare n’ont pas pu être classées automatiquement.`);
+      if(!usage.billing_authoritative)alerts.push('La période est celle de la facturation, mais les opérations viennent d’Analytics : le dashboard Billing Cloudflare reste la référence avant tout paiement.');
     }else{
       renderR2Quota('r2ClassA',0,1000000,formatStat);renderR2Quota('r2ClassB',0,10000000,formatStat);
-      $('r2ClassAValue').textContent='Token Analytics manquant';$('r2ClassBValue').textContent='Token Analytics manquant';
-      $('r2ClassARemaining').textContent='Ajoute CLOUDFLARE_ANALYTICS_API_TOKEN';$('r2ClassBRemaining').textContent='Permission Account Analytics — Read';
-      setNotice('r2UsageNotice',usage.analytics_error||'Ajoute CLOUDFLARE_ANALYTICS_API_TOKEN dans Render pour afficher les opérations mensuelles. Le token doit uniquement avoir Account Analytics — Read.','error');
+      $('r2ClassAValue').textContent='Facturation non vérifiée';$('r2ClassBValue').textContent='Facturation non vérifiée';
+      $('r2ClassARemaining').textContent='Ajoute CLOUDFLARE_BILLING_API_TOKEN';$('r2ClassBRemaining').textContent='Permission Account Billing — Read';
+      setNotice('r2UsageNotice',usage.billing_error||usage.analytics_error||'Le Studio refuse d’afficher une estimation comme une valeur facturable. Ajoute le token Billing Cloudflare.','error');
     }
     if(usage.bucket_storage_error)alerts.push(usage.bucket_storage_error);
-    if(usage.analytics_ready&&alerts.length)setNotice('r2UsageNotice',`${alerts.join('\n')} Vérifie le dashboard Cloudflare avant d’approcher les limites.`,'error');
-    const start=statsDate(usage.period_start);
-    $('r2UsageMeta').textContent=`Mois en cours depuis le ${start}${usage.bucket_name?` • Bucket Studio « ${usage.bucket_name} » : ${formatR2Storage(usage.bucket_storage_bytes)}`:''} • stockage affiché : ${accountStorage===null||accountStorage===undefined?'mesure du bucket':'dernier relevé du compte Cloudflare'}.`;
+    if(usage.analytics_error)alerts.push(usage.analytics_error);
+    if((usage.billing_ready||usage.analytics_ready)&&alerts.length)setNotice('r2UsageNotice',`${alerts.join('\n')} Vérifie le dashboard Cloudflare avant d’approcher les limites.`,'error');
+    const start=usage.period_start?statsDate(usage.period_start):'inconnue',end=usage.period_end?statsDate(usage.period_end):'inconnue';
+    const source=usage.billing_authoritative?'API Billing Cloudflare (valeurs de facturation)':usage.billing_period_ready?'Analytics R2 sur la période de facturation':'source de facturation indisponible';
+    const cost=usage.billed_cost===null||usage.billed_cost===undefined?'':` • coût facturé relevé : ${Number(usage.billed_cost).toLocaleString('fr-FR',{style:'currency',currency:usage.billing_currency||'USD'})}`;
+    $('r2UsageMeta').textContent=`Cycle Cloudflare : ${start} → ${end} • Source : ${source}${cost}${usage.bucket_name?` • Bucket Studio « ${usage.bucket_name} » : ${formatR2Storage(usage.bucket_storage_bytes)}`:''} • stockage affiché : ${accountStorage===null||accountStorage===undefined?'mesure exacte du bucket Studio':'dernier relevé du compte R2'}.`;
   }catch(err){setNotice('r2UsageNotice',err.message,'error');$('r2UsageMeta').textContent='Statistiques Cloudflare indisponibles.';}
   finally{button.disabled=false;button.textContent='Actualiser Cloudflare';}
 }
@@ -828,9 +845,12 @@ function renderLibrary(){
         const mediaItem={url:item.secure_url,library_id:item.id,thumbnail_url:item.thumbnail_url||'',media_type:itemType,name:item.original_filename||'Média',size:item.bytes||0};
         const selectedKind=$('mediaKind').value;
         const matchesCarousel=(itemType==='image'&&selectedKind==='carousel')||(itemType==='video'&&selectedKind==='carousel_video');
+        const matchesStory=(itemType==='image'&&selectedKind==='story_photo')||(itemType==='video'&&selectedKind==='story_video');
         if(matchesCarousel){
           if(selectedMediaItems.length>=10){setNotice('libraryNotice','Le carrousel contient déjà 10 médias.','error');return;}
           selectedMediaItems.push(mediaItem);
+        }else if(matchesStory){
+          selectedMediaItems=[mediaItem];
         }else{
           $('mediaKind').value=itemType==='image'?'photo':'reel';configureMediaKind(true);selectedMediaItems=[mediaItem];
         }
@@ -874,7 +894,7 @@ function calendarDayCell(date,items){
   if(sameLocalDay(date,new Date()))cell.classList.add('today');
   installCalendarDropTarget(cell);
   for(const item of items.filter(value=>sameLocalDay(eventDate(value),date))){
-    const badge=document.createElement('button');badge.className=`calendar-event status-${item.status}`;badge.textContent=item.title||statusLabels[item.status];badge.title=`${statusLabels[item.status]||item.status} • ${eventDate(item).toLocaleString()}`;
+    const badge=document.createElement('button');badge.className=`calendar-event status-${item.status} kind-${item.media_kind||'reel'}`;badge.textContent=`${item.media_kind==='story'?'Story • ':''}${item.title||statusLabels[item.status]}`;badge.title=`${item.media_kind==='story'?'Story • ':''}${statusLabels[item.status]||item.status} • ${eventDate(item).toLocaleString()}`;
     badge.onclick=()=>{if(badge.dataset.justDragged)return;document.getElementById(`publication-${item.id}`)?.scrollIntoView({behavior:'smooth'});};
     if(item.status==='scheduled')installCalendarEventDrag(badge,item);
     cell.querySelector('.day-events').appendChild(badge);
@@ -925,7 +945,7 @@ function renderCalendar(items,start,end){
   for(const item of [...items].sort((a,b)=>eventDate(a)-eventDate(b))){
     const row=document.createElement('article');row.className='publication-item';row.id=`publication-${item.id}`;
     row.innerHTML='<div><strong class="title"></strong><p class="muted small details"></p><p class="error-text"></p></div><div class="publication-actions"></div>';
-    const mediaLabel={photo:'Photo',carousel:'Carrousel',reel:'Reel'}[item.media_kind||'reel'];
+    const mediaLabel={photo:'Photo',carousel:'Carrousel',reel:'Reel',story:'Story'}[item.media_kind||'reel'];
     row.querySelector('.title').textContent=item.title||'Publication Instagram';row.querySelector('.details').textContent=`${eventDate(item).toLocaleString('fr-FR')} • ${mediaLabel} • ${statusLabels[item.status]||item.status}${item.publication_mode==='trial'?' • Trial Reel':''}${item.workflow==='manual_music'?' • Musique manuelle':''}`;
     if(item.last_error)row.querySelector('.error-text').textContent=item.last_error;
     if(['scheduled','failed','awaiting_manual'].includes(item.status)){const cancel=document.createElement('button');cancel.className='ghost';cancel.textContent='Annuler';cancel.onclick=async()=>{if(!confirm('Annuler cette publication ?'))return;try{await api(`/api/publications/${item.id}`,{method:'DELETE'});loadCalendar();}catch(err){setNotice('calendarNotice',err.message,'error');}};row.querySelector('.publication-actions').appendChild(cancel);}
@@ -1051,7 +1071,7 @@ function renderAnalyticsPosts(){
   const posts=$('statsPosts');posts.innerHTML='';
   for(const item of sortedAnalyticsPosts()){
     const row=document.createElement('article');row.className='stats-post';row.innerHTML='<div class="stats-post-main"><span class="pill kind"></span><strong class="hook"></strong><span class="date"></span></div><div class="stats-post-metrics"><span class="views"></span><span class="likes"></span><span class="reach"></span><span class="rate"></span><span class="delta"></span></div><a class="ghost permalink" target="_blank" rel="noopener">Voir</a><details class="stats-post-details"><summary>Plus de statistiques</summary><div class="stats-post-detail-grid"></div></details>';
-    row.querySelector('.kind').textContent={reel:'Reel',photo:'Photo',carousel:'Carrousel'}[item.media_kind]||'Post';
+    row.querySelector('.kind').textContent={reel:'Reel',photo:'Photo',carousel:'Carrousel',story:'Story'}[item.media_kind]||'Post';
     row.querySelector('.hook').textContent=analyticsPostLabel(item);
     row.querySelector('.date').textContent=item.timestamp?new Date(item.timestamp).toLocaleString('fr-FR'):'Date indisponible';
     row.querySelector('.views').textContent=`${formatStat(item.views)} vues`;
@@ -1102,6 +1122,35 @@ function renderAssistantReport(report,createdAt=''){
   }
   $('statsAssistantMeta').textContent=createdAt?`Dernière analyse : ${new Date(createdAt).toLocaleString('fr-FR')}`:'Analyse Groq enregistrée dans le Studio.';
 }
+function renderContentIdeas(report,createdAt='',savedBrief=''){
+  const root=$('contentIdeasReport');root.innerHTML='';
+  if(savedBrief&&!$('contentIdeasBrief').value.trim())$('contentIdeasBrief').value=savedBrief;
+  if(!report||!Array.isArray(report.ideas)||!report.ideas.length){
+    root.innerHTML='<p class="muted">Synchronise au moins 3 publications puis génère tes premiers concepts.</p>';
+    $('contentIdeasMeta').textContent='';return;
+  }
+  if(report.diagnosis){const diagnosis=document.createElement('p');diagnosis.className='content-ideas-diagnosis';diagnosis.textContent=report.diagnosis;root.appendChild(diagnosis);}
+  report.ideas.slice(0,3).forEach((idea,index)=>{
+    const card=document.createElement('article');card.className='content-idea-card';
+    card.innerHTML='<header><div><span class="idea-number"></span><h3></h3></div><span class="pill objective"></span></header><p class="concept"></p><p class="why"></p><div class="idea-key-facts"><span class="duration"></span><span class="equipment"></span></div><section class="idea-hook"><span>Hook • 0–2 s</span><strong></strong></section><section><h4>Protocole de tournage</h4><ol class="shots"></ol></section><section class="screen-text-section"><h4>Textes à l’écran</h4><div class="screen-texts"></div></section><div class="idea-finish"><section><h4>CTA naturel</h4><p class="cta"></p></section><section><h4>Angle de caption</h4><p class="caption-angle"></p></section></div><section class="success-metric"><h4>À mesurer</h4><p></p></section>';
+    card.querySelector('.idea-number').textContent=`IDÉE ${index+1}`;
+    card.querySelector('h3').textContent=idea.title||`Concept ${index+1}`;
+    card.querySelector('.objective').textContent=idea.objective||'Test de croissance';
+    card.querySelector('.concept').textContent=idea.concept||'';
+    card.querySelector('.why').textContent=idea.why_from_stats?`Pourquoi la tester : ${idea.why_from_stats}`:'';
+    card.querySelector('.duration').textContent=`⏱ ${Number(idea.duration_seconds)||30} s`;
+    card.querySelector('.equipment').textContent=`🎥 ${idea.equipment||'Matériel à préciser'}`;
+    card.querySelector('.idea-hook strong').textContent=idea.hook||'Hook à préciser';
+    for(const shot of idea.shots||[]){const item=document.createElement('li');item.textContent=shot;card.querySelector('.shots').appendChild(item);}
+    for(const value of idea.on_screen_text||[]){const chip=document.createElement('span');chip.textContent=value;card.querySelector('.screen-texts').appendChild(chip);}
+    if(!(idea.on_screen_text||[]).length)card.querySelector('.screen-text-section').classList.add('hidden');
+    card.querySelector('.cta').textContent=idea.cta||'';
+    card.querySelector('.caption-angle').textContent=idea.caption_angle||'';
+    card.querySelector('.success-metric p').textContent=idea.success_metric||'';
+    root.appendChild(card);
+  });
+  $('contentIdeasMeta').textContent=createdAt?`Protocoles enregistrés dans le Studio • ${new Date(createdAt).toLocaleString('fr-FR')}`:'Protocoles enregistrés dans le Studio.';
+}
 function renderAnalytics(data){
   const summary=data.summary||{};
   $('statsMediaCount').textContent=formatStat(summary.media_count);
@@ -1132,6 +1181,7 @@ function renderAnalytics(data){
 
   analyticsPosts=Array.isArray(data.top_posts)?data.top_posts:[];
   renderAnalyticsPosts();
+  renderContentIdeas(data.content_ideas,data.content_ideas_created_at,data.content_ideas_brief);
   renderAssistantReport(data.assistant_report,data.assistant_report_created_at);
 }
 async function loadAnalytics(){
@@ -1192,6 +1242,16 @@ $('analyzeStatsBtn').addEventListener('click',async()=>{
     setNotice('statsAssistantNotice',`Analyse terminée avec ${data.model}.`,'success');
   }catch(err){setNotice('statsAssistantNotice',err.message,'error');}
   finally{button.disabled=false;button.textContent='Analyser mes performances';}
+});
+$('generateContentIdeasBtn').addEventListener('click',async()=>{
+  const brief=$('contentIdeasBrief').value.trim();
+  const button=$('generateContentIdeasBtn');button.disabled=true;button.textContent='Création des protocoles…';hideNotice('contentIdeasNotice');
+  try{
+    const data=await api(`/api/analytics/content-ideas?period_days=${statsPeriodValue()}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({brief})});
+    renderContentIdeas(data.report,new Date().toISOString(),brief);
+    setNotice('contentIdeasNotice',`3 protocoles créés avec ${data.model} et enregistrés dans MongoDB.`,'success');
+  }catch(err){setNotice('contentIdeasNotice',err.message,'error');}
+  finally{button.disabled=false;button.textContent='Créer 3 protocoles de vidéos';}
 });
 $('statsSort').addEventListener('change',renderAnalyticsPosts);
 $('statsPeriod').addEventListener('change',()=>{try{localStorage.setItem('igstudio.statsPeriod',$('statsPeriod').value);}catch{}loadAnalytics();});

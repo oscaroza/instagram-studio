@@ -146,6 +146,11 @@ class Settings:
         "true",
     ).lower() in {"1", "true", "yes", "on"}
 
+    enable_instagram_stories: bool = os.getenv(
+        "ENABLE_INSTAGRAM_STORIES",
+        "true",
+    ).lower() in {"1", "true", "yes", "on"}
+
     # ------------------------------------------------------------
     # V2 persistence and media storage
     # ------------------------------------------------------------
@@ -176,6 +181,10 @@ class Settings:
     r2_folder: str = os.getenv("R2_FOLDER", "instagram-studio").strip("/")
     cloudflare_analytics_api_token: str = os.getenv(
         "CLOUDFLARE_ANALYTICS_API_TOKEN",
+        "",
+    ).strip()
+    cloudflare_billing_api_token: str = os.getenv(
+        "CLOUDFLARE_BILLING_API_TOKEN",
         "",
     ).strip()
     r2_max_storage_gb: float = min(

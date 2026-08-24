@@ -67,6 +67,40 @@ class FakeGroqClient:
         return FakeGroqResponse()
 
 
+class FakeContentIdeasResponse:
+    status_code = 200
+    text = ""
+
+    def json(self):
+        report = {
+            "diagnosis": "Les statistiques justifient trois tests différents.",
+            "ideas": [
+                {
+                    "title": f"Concept {index}",
+                    "objective": "Partages",
+                    "concept": "Comparer deux façons de filmer la même scène.",
+                    "why_from_stats": "Hypothèse à tester sur un échantillon limité.",
+                    "hook": "Tu préfères A ou B ?",
+                    "duration_seconds": 24,
+                    "shots": ["Filmer la version A", "Filmer la version B"],
+                    "on_screen_text": ["A ou B ?"],
+                    "cta": "Choisis A ou B en commentaire.",
+                    "caption_angle": "Expliquer les deux techniques.",
+                    "success_metric": "Comparer le taux de commentaires.",
+                    "equipment": "iPhone 16 Pro",
+                }
+                for index in range(1, 4)
+            ],
+        }
+        return {"choices": [{"message": {"content": json.dumps(report)}}]}
+
+
+class FakeContentIdeasClient(FakeGroqClient):
+    async def post(self, url, json=None, headers=None):
+        type(self).last_payload = json
+        return FakeContentIdeasResponse()
+
+
 def test_oauth_requests_insights_permission():
     previous = (
         instagram.settings.instagram_app_id,
@@ -315,3 +349,48 @@ def test_groq_analysis_never_sends_caption_or_complete_hook(monkeypatch):
     assert response_format["json_schema"]["schema"]["additionalProperties"] is False
     assert FakeGroqClient.last_payload["reasoning_effort"] == "low"
     assert FakeGroqClient.last_payload["max_completion_tokens"] == 4096
+
+
+def test_growth_ideas_use_stats_and_brief_without_historical_text(monkeypatch):
+    dashboard = {
+        "summary": {"media_count": 8, "views": 9000, "reach": 7000, "interactions": 360},
+        "best_times": [{"weekday": "Samedi", "hour": 18, "count": 4}],
+        "top_posts": [
+            {
+                "caption": "CAPTION-PRIVEE",
+                "hook": "HOOK-COMPLET-PRIVE ?",
+                "media_kind": "reel",
+                "views": 3000,
+                "reach": 2200,
+                "interactions": 180,
+                "engagement_rate": 8.1,
+                "permalink": "https://instagram.com/private",
+            }
+        ],
+    }
+    monkeypatch.setattr(cerebras.httpx, "AsyncClient", FakeContentIdeasClient)
+    previous_key = cerebras.settings.cerebras_api_key
+    object.__setattr__(cerebras.settings, "cerebras_api_key", "test-only-key")
+    try:
+        report = asyncio.run(
+            cerebras.generate_growth_content_ideas(
+                dashboard,
+                "-15 abonnés net. iPhone 16 Pro uniquement, deux heures sur la côte.",
+            )
+        )
+    finally:
+        object.__setattr__(cerebras.settings, "cerebras_api_key", previous_key)
+
+    transmitted = json.dumps(FakeContentIdeasClient.last_payload, ensure_ascii=False)
+    assert len(report["ideas"]) == 3
+    assert report["ideas"][0]["equipment"] == "iPhone 16 Pro"
+    assert "-15 abonnés net" in transmitted
+    user_content = FakeContentIdeasClient.last_payload["messages"][1]["content"]
+    assert '"views": 9000' in user_content
+    assert "CAPTION-PRIVEE" not in transmitted
+    assert "HOOK-COMPLET-PRIVE" not in transmitted
+    assert "instagram.com/private" not in transmitted
+    response_format = FakeContentIdeasClient.last_payload["response_format"]
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["strict"] is True
+    assert response_format["json_schema"]["schema"]["additionalProperties"] is False

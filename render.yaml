@@ -31,6 +31,8 @@ services:
         value: 250
       - key: ENABLE_TRIAL_REELS
         value: true
+      - key: ENABLE_INSTAGRAM_STORIES
+        value: true
       - key: MONGODB_URI
         sync: false
       - key: MONGODB_DATABASE
@@ -57,6 +59,10 @@ services:
         sync: false
       - key: R2_FOLDER
         value: instagram-studio
+      - key: CLOUDFLARE_ANALYTICS_API_TOKEN
+        sync: false
+      - key: CLOUDFLARE_BILLING_API_TOKEN
+        sync: false
       - key: R2_MAX_STORAGE_GB
         value: 9
       - key: VAPID_PUBLIC_KEY

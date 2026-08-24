@@ -46,6 +46,17 @@ def publishing_capabilities() -> tuple[Capability, ...]:
             app_enabled=True,
             status="Disponible — 2 à 10 photos ou vidéos",
         ),
+        Capability(
+            key="story",
+            label="Story photo/vidéo",
+            meta_supported=True,
+            app_enabled=settings.enable_instagram_stories,
+            status=(
+                "Disponible — immédiate et programmée"
+                if settings.enable_instagram_stories
+                else "Désactivée pour ce compte via ENABLE_INSTAGRAM_STORIES"
+            ),
+        ),
     )
 
 
