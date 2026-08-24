@@ -183,6 +183,26 @@ def test_manual_music_workflow_accepts_photos_and_carousels(monkeypatch):
     assert [document["media_kind"] for document in inserted] == ["photo", "carousel"]
 
 
+def test_carousel_validation_accepts_videos_and_mixed_media():
+    items = v2.publication_media_items(
+        {
+            "media_items": [
+                {
+                    "url": "https://studio.example/photo.jpg",
+                    "media_type": "image",
+                },
+                {
+                    "url": "https://studio.example/video.mp4",
+                    "media_type": "video",
+                },
+            ]
+        },
+        "carousel",
+    )
+
+    assert [item["media_type"] for item in items] == ["image", "video"]
+
+
 def test_publication_claim_blocks_duplicate_until_released(monkeypatch):
     monkeypatch.setattr(publication_safety, "database_configured", lambda: False)
     key = publication_safety.publication_fingerprint(

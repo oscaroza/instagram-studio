@@ -41,10 +41,10 @@ def publishing_capabilities() -> tuple[Capability, ...]:
         ),
         Capability(
             key="carousel",
-            label="Carrousel photo",
+            label="Carrousel photo/vidéo",
             meta_supported=True,
             app_enabled=True,
-            status="Disponible — 2 à 10 JPEG",
+            status="Disponible — 2 à 10 photos ou vidéos",
         ),
     )
 

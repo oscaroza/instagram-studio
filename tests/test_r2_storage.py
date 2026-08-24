@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.config import settings
 from app.routes import v2
-from app.services import media_storage, r2_media
+from app.services import cloudflare_usage, media_storage, r2_media
 
 
 @contextmanager
@@ -29,6 +29,26 @@ R2_SETTINGS = {
     "r2_folder": "instagram-studio",
     "r2_max_storage_gb": 9.0,
 }
+
+
+class FakeAnalyticsResponse:
+    status_code = 200
+
+    def __init__(self, payload):
+        self.payload = payload
+
+    def json(self):
+        return self.payload
+
+
+class FakeAnalyticsClient:
+    def __init__(self, payload):
+        self.payload = payload
+        self.request = None
+
+    def post(self, url, headers, json):
+        self.request = {"url": url, "headers": headers, "json": json}
+        return FakeAnalyticsResponse(self.payload)
 
 
 class FakeR2Client:
@@ -106,6 +126,75 @@ def test_r2_errors_never_echo_credentials():
     assert "account-id" not in message
     assert "access-key" not in message
     assert "secret-key" not in message
+
+
+def test_r2_dashboard_classifies_monthly_operations_and_storage():
+    payload = {
+        "data": {
+            "viewer": {
+                "accounts": [
+                    {
+                        "operations": [
+                            {"sum": {"requests": 120}, "dimensions": {"actionType": "PutObject"}},
+                            {"sum": {"requests": 30}, "dimensions": {"actionType": "ListObjectsV2"}},
+                            {"sum": {"requests": 5000}, "dimensions": {"actionType": "GetObject"}},
+                            {"sum": {"requests": 8}, "dimensions": {"actionType": "DeleteObject"}},
+                            {"sum": {"requests": 2}, "dimensions": {"actionType": "FutureAction"}},
+                        ],
+                        "storage": [
+                            {
+                                "max": {
+                                    "objectCount": 12,
+                                    "payloadSize": 2_400_000_000,
+                                    "metadataSize": 2_000,
+                                },
+                                "dimensions": {"datetime": "2026-08-24T10:00:00Z"},
+                            }
+                        ],
+                    }
+                ]
+            }
+        }
+    }
+    analytics_client = FakeAnalyticsClient(payload)
+    with temporary_settings(
+        **R2_SETTINGS,
+        cloudflare_analytics_api_token="analytics-secret-token",
+    ):
+        result = cloudflare_usage.r2_usage_summary(
+            now=cloudflare_usage.datetime(2026, 8, 24, tzinfo=cloudflare_usage.timezone.utc),
+            analytics_client=analytics_client,
+            storage_client=FakeR2Client(usage=2_000_000_000),
+        )
+
+    assert result["analytics_ready"] is True
+    assert result["class_a"]["used"] == 150
+    assert result["class_a"]["remaining"] == 999_850
+    assert result["class_b"]["used"] == 5000
+    assert result["free_operations"] == 8
+    assert result["unknown_operations"] == 2
+    assert result["bucket_storage_bytes"] == 2_000_000_000
+    assert result["account_storage_bytes"] == 2_400_002_000
+    assert analytics_client.request["headers"]["Authorization"] == "Bearer analytics-secret-token"
+    assert analytics_client.request["json"]["variables"]["startDate"].startswith("2026-08-01")
+
+
+def test_r2_dashboard_never_returns_analytics_token_in_errors():
+    client = FakeAnalyticsClient(
+        {"errors": [{"message": "invalid analytics-secret-token for account-id"}]}
+    )
+    with temporary_settings(
+        **R2_SETTINGS,
+        cloudflare_analytics_api_token="analytics-secret-token",
+    ):
+        result = cloudflare_usage.r2_usage_summary(
+            analytics_client=client,
+            storage_client=FakeR2Client(),
+        )
+
+    assert result["analytics_ready"] is False
+    assert "analytics-secret-token" not in result["analytics_error"]
+    assert "account-id" not in result["analytics_error"]
 
 
 def test_auto_storage_prefers_r2_and_keeps_legacy_cloudinary(monkeypatch):

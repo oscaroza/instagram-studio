@@ -10,6 +10,7 @@ from app.services.analytics import (
     AnalyticsError,
     build_analytics_dashboard,
     clear_assistant_messages,
+    get_analytics_sync_progress,
     list_assistant_messages,
     save_assistant_exchange,
     save_analytics_report,
@@ -20,6 +21,7 @@ from app.services.cerebras import (
     analyze_instagram_performance,
     chat_instagram_performance,
 )
+from app.services.cloudflare_usage import r2_usage_summary
 from app.services.database import (
     DatabaseUnavailable,
     database,
@@ -145,7 +147,10 @@ def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, st
         if not url.startswith(("https://", "http://")):
             raise ValueError("Chaque média doit avoir une URL publique.")
         media_type = str(raw_item.get("media_type", expected_type)).lower()
-        if media_type != expected_type:
+        allowed_types = (
+            {"image", "video"} if media_kind == "carousel" else {expected_type}
+        )
+        if media_type not in allowed_types:
             raise ValueError("Le type d’un média ne correspond pas à la publication.")
         items.append(
             {
@@ -160,7 +165,7 @@ def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, st
     maximum = 10 if media_kind == "carousel" else 1
     if len(items) < required or len(items) > maximum:
         if media_kind == "carousel":
-            raise ValueError("Un carrousel doit contenir entre 2 et 10 photos JPEG.")
+            raise ValueError("Un carrousel doit contenir entre 2 et 10 médias.")
         raise ValueError("Ajoute exactement un média à la publication.")
     return items
 
@@ -202,6 +207,19 @@ async def v2_status():
         "push_ready": push_configured(),
         "trial_reels_enabled": settings.enable_trial_reels,
     }
+
+
+@router.get("/r2/usage")
+async def r2_usage(request: Request):
+    if not request_is_authenticated(request):
+        return api_error("Session requise pour charger les statistiques Cloudflare.", 401)
+    if active_storage_provider() != "r2":
+        return api_error("Cloudflare R2 n’est pas le stockage média actif.", 409)
+    try:
+        usage = await asyncio.to_thread(r2_usage_summary)
+    except Exception:
+        return api_error("Statistiques Cloudflare temporairement indisponibles.", 503)
+    return {"ok": True, "usage": usage}
 
 
 @router.get("/preferences/appearance")
@@ -441,6 +459,11 @@ async def synchronize_analytics():
     except Exception:
         return api_error("Synchronisation Instagram temporairement indisponible.", 503)
     return {"ok": True, "sync": result}
+
+
+@router.get("/analytics/sync-progress")
+async def analytics_sync_progress():
+    return {"ok": True, "progress": get_analytics_sync_progress()}
 
 
 @router.post("/analytics/assistant")

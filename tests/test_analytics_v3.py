@@ -98,6 +98,53 @@ def test_insight_payload_is_normalized_from_values_and_totals():
     assert result == {"views": 1200, "reach": 800}
 
 
+def test_instagram_sync_reports_real_progress(monkeypatch):
+    class AnalyticsState:
+        def update_one(self, *args, **kwargs):
+            return None
+
+    class SyncDatabase:
+        analytics_state = AnalyticsState()
+
+    async def credentials():
+        return "instagram-user", "instagram-token"
+
+    async def media_list(**kwargs):
+        return [{"id": "one"}, {"id": "two"}]
+
+    async def insights(**kwargs):
+        return {"views": 100, "reach": 80}
+
+    monkeypatch.setattr(analytics, "database_configured", lambda: True)
+    monkeypatch.setattr(analytics, "database", lambda: SyncDatabase())
+    monkeypatch.setattr(analytics, "resolve_instagram_credentials", credentials)
+    monkeypatch.setattr(analytics, "list_instagram_media", media_list)
+    monkeypatch.setattr(analytics, "fetch_media_insights", insights)
+    monkeypatch.setattr(analytics, "_store_media_snapshot", lambda *args: None)
+
+    try:
+        result = asyncio.run(analytics.sync_instagram_analytics())
+        progress = analytics.get_analytics_sync_progress()
+    finally:
+        analytics._set_sync_progress(
+            running=False,
+            phase="idle",
+            percent=0.0,
+            current=0,
+            total=0,
+            message="Prêt à synchroniser.",
+            started_at=None,
+            finished_at=None,
+        )
+
+    assert result["metrics_updated"] == 2
+    assert progress["running"] is False
+    assert progress["phase"] == "complete"
+    assert progress["percent"] == 100
+    assert progress["current"] == 2
+    assert progress["total"] == 2
+
+
 def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     documents = [
         {
@@ -107,8 +154,29 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
             "media_kind": "reel",
             "timestamp": datetime(2026, 8, 17, 18, tzinfo=timezone.utc),
             "permalink": "https://instagram.com/p/one",
-            "latest_metrics": {"views": 1000, "reach": 800, "likes": 50, "total_interactions": 80},
-            "previous_metrics": {"views": 700, "reach": 600, "total_interactions": 50},
+            "media_product_type": "REELS",
+            "latest_metrics": {
+                "views": 1000,
+                "reach": 800,
+                "likes": 50,
+                "comments": 12,
+                "saved": 10,
+                "shares": 8,
+                "total_interactions": 80,
+                "ig_reels_avg_watch_time": 4250,
+                "ig_reels_video_view_total_time": 420000,
+                "clips_replays_count": 160,
+                "reels_skip_rate": 0.21,
+            },
+            "previous_metrics": {
+                "views": 700,
+                "reach": 600,
+                "likes": 40,
+                "comments": 8,
+                "saved": 6,
+                "shares": 4,
+                "total_interactions": 50,
+            },
         },
         {
             "_id": "media-2",
@@ -137,6 +205,14 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     assert dashboard["best_times"][0]["hour"] == 18
     assert dashboard["top_posts"][0]["delta_views"] == 300
     assert dashboard["top_posts"][0]["likes"] == 50
+    assert dashboard["top_posts"][0]["delta_reach"] == 200
+    assert dashboard["top_posts"][0]["delta_saved"] == 4
+    assert dashboard["top_posts"][0]["save_rate"] == 1.25
+    assert dashboard["top_posts"][0]["views_per_reached_account"] == 1.25
+    assert dashboard["top_posts"][0]["avg_watch_time_ms"] == 4250
+    assert dashboard["top_posts"][0]["replays"] == 160
+    assert "reels_skip_rate" in dashboard["top_posts"][0]["available_metrics"]
+    assert dashboard["top_posts"][0]["media_product_type"] == "REELS"
     assert dashboard["automatic_findings"]
 
 

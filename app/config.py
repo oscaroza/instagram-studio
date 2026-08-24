@@ -174,6 +174,10 @@ class Settings:
     r2_bucket_name: str = os.getenv("R2_BUCKET_NAME", "").strip()
     r2_public_base_url: str = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
     r2_folder: str = os.getenv("R2_FOLDER", "instagram-studio").strip("/")
+    cloudflare_analytics_api_token: str = os.getenv(
+        "CLOUDFLARE_ANALYTICS_API_TOKEN",
+        "",
+    ).strip()
     r2_max_storage_gb: float = min(
         9.0,
         max(0.5, float(os.getenv("R2_MAX_STORAGE_GB", "9"))),

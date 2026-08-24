@@ -662,6 +662,78 @@ async def create_image_container(
     return str(creation_id)
 
 
+async def create_carousel_video_container(
+    *,
+    user_id: str,
+    access_token: str,
+    video_url: str,
+) -> str:
+    if not user_id:
+        raise InstagramError("INSTAGRAM_USER_ID vide.")
+    if not access_token:
+        raise InstagramError("INSTAGRAM_ACCESS_TOKEN vide.")
+    if not video_url.startswith(("https://", "http://")):
+        raise InstagramError(
+            "L'URL de la vidéo du carrousel doit être publique et commencer par "
+            "https:// ou http://."
+        )
+
+    payload = {
+        "media_type": "VIDEO",
+        "video_url": video_url,
+        "is_carousel_item": "true",
+        "access_token": access_token,
+    }
+    async with httpx.AsyncClient(timeout=45) as client:
+        response = await client.post(
+            api_url(f"{user_id}/media"),
+            data=payload,
+        )
+
+    if response.status_code >= 400:
+        raise InstagramError(
+            "Création de la vidéo du carrousel refusée : "
+            f"{_safe_meta_error(response.text, access_token)}"
+        )
+    try:
+        data = response.json()
+    except ValueError as exc:
+        raise InstagramError(
+            "Instagram a renvoyé une réponse JSON invalide pour la vidéo du carrousel."
+        ) from exc
+
+    creation_id = data.get("id")
+    if not creation_id:
+        raise InstagramError(
+            "Instagram n'a pas renvoyé de creation_id pour la vidéo du carrousel."
+        )
+    return str(creation_id)
+
+
+async def create_carousel_item_container(
+    *,
+    user_id: str,
+    access_token: str,
+    media_item: dict,
+) -> str:
+    media_type = str(media_item.get("media_type", "image")).lower()
+    media_url = str(media_item.get("url", ""))
+    if media_type == "video":
+        return await create_carousel_video_container(
+            user_id=user_id,
+            access_token=access_token,
+            video_url=media_url,
+        )
+    if media_type == "image":
+        return await create_image_container(
+            user_id=user_id,
+            access_token=access_token,
+            image_url=media_url,
+            is_carousel_item=True,
+        )
+    raise InstagramError("Type de média de carrousel invalide.")
+
+
 async def create_carousel_container(
     *,
     user_id: str,
@@ -1099,19 +1171,18 @@ async def publish_carousel(
     *,
     user_id: str,
     access_token: str,
-    image_urls: list[str],
+    media_items: list[dict],
     caption: str,
 ) -> dict[str, str]:
-    if len(image_urls) < 2 or len(image_urls) > 10:
-        raise InstagramError("Un carrousel doit contenir entre 2 et 10 photos.")
+    if len(media_items) < 2 or len(media_items) > 10:
+        raise InstagramError("Un carrousel doit contenir entre 2 et 10 médias.")
 
     children: list[str] = []
-    for image_url in image_urls:
-        child_id = await create_image_container(
+    for media_item in media_items:
+        child_id = await create_carousel_item_container(
             user_id=user_id,
             access_token=access_token,
-            image_url=image_url,
-            is_carousel_item=True,
+            media_item=media_item,
         )
         await wait_until_ready(
             creation_id=child_id,

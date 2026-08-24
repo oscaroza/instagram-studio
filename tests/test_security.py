@@ -484,6 +484,8 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'data-tab="stats"' in page.text
     assert 'id="stats"' in page.text
     assert 'id="syncStatsBtn"' in page.text
+    assert 'id="statsSyncProgress"' in page.text
+    assert 'id="statsSyncProgressBar"' in page.text
     assert 'id="analyzeStatsBtn"' in page.text
     assert 'id="statsAssistantReport"' in page.text
     assert 'id="notifyLogin"' in page.text
@@ -493,6 +495,9 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'id="statsGrowthChart"' in page.text
     assert 'data-tab="settings"' in page.text
     assert 'id="settings"' in page.text
+    assert 'id="r2UsageCard"' in page.text
+    assert 'id="r2ClassABar"' in page.text
+    assert 'id="r2ClassBBar"' in page.text
 
 
 def test_phase_two_organization_controls_are_available():

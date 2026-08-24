@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -36,7 +37,28 @@ MEDIA_FIELDS = (
     "thumbnail_url,username"
 )
 _sync_lock = asyncio.Lock()
+_sync_progress_lock = threading.Lock()
+_sync_progress: dict[str, Any] = {
+    "running": False,
+    "phase": "idle",
+    "percent": 0.0,
+    "current": 0,
+    "total": 0,
+    "message": "Prêt à synchroniser.",
+    "started_at": None,
+    "finished_at": None,
+}
 PERIOD_DAYS_OPTIONS = {7, 30, 90}
+
+
+def _set_sync_progress(**values: Any) -> None:
+    with _sync_progress_lock:
+        _sync_progress.update(values)
+
+
+def get_analytics_sync_progress() -> dict[str, Any]:
+    with _sync_progress_lock:
+        return dict(_sync_progress)
 
 
 def _safe_meta_message(response: httpx.Response, access_token: str) -> str:
@@ -278,60 +300,122 @@ async def sync_instagram_analytics(max_media: int | None = None) -> dict[str, An
         raise AnalyticsError("MONGODB_URI est nécessaire pour enregistrer les statistiques.")
     if _sync_lock.locked():
         raise AnalyticsError("Une synchronisation des statistiques est déjà en cours.")
-    user_id, access_token = await resolve_instagram_credentials()
-    if not user_id or not access_token:
-        raise AnalyticsError("Connecte Instagram avant de synchroniser les statistiques.")
+    started_at = utc_now()
+    _set_sync_progress(
+        running=True,
+        phase="preparing",
+        percent=1.0,
+        current=0,
+        total=0,
+        message="Connexion à Instagram…",
+        started_at=_iso(started_at),
+        finished_at=None,
+    )
+    try:
+        user_id, access_token = await resolve_instagram_credentials()
+        if not user_id or not access_token:
+            raise AnalyticsError("Connecte Instagram avant de synchroniser les statistiques.")
 
-    maximum = max(1, min(int(max_media or settings.analytics_max_media), 250))
-    async with _sync_lock:
-        async with httpx.AsyncClient(timeout=35) as client:
-            media_items = await list_instagram_media(
-                user_id=user_id,
-                access_token=access_token,
-                max_media=maximum,
-                client=client,
+        maximum = max(1, min(int(max_media or settings.analytics_max_media), 250))
+        async with _sync_lock:
+            _set_sync_progress(
+                phase="listing",
+                percent=4.0,
+                message="Récupération de la liste des publications…",
             )
-            semaphore = asyncio.Semaphore(4)
+            async with httpx.AsyncClient(timeout=35) as client:
+                media_items = await list_instagram_media(
+                    user_id=user_id,
+                    access_token=access_token,
+                    max_media=maximum,
+                    client=client,
+                )
+                total = len(media_items)
+                _set_sync_progress(
+                    phase="insights",
+                    percent=10.0 if total else 85.0,
+                    current=0,
+                    total=total,
+                    message=f"Lecture des statistiques de {total} publication(s)…",
+                )
+                semaphore = asyncio.Semaphore(4)
 
-            async def collect(item: dict[str, Any]):
-                async with semaphore:
-                    try:
-                        return item, await fetch_media_insights(
-                            media=item,
-                            access_token=access_token,
-                            client=client,
-                        ), ""
-                    except AnalyticsError as exc:
-                        return item, {}, str(exc)
+                async def collect(item: dict[str, Any]):
+                    async with semaphore:
+                        try:
+                            return item, await fetch_media_insights(
+                                media=item,
+                                access_token=access_token,
+                                client=client,
+                            ), ""
+                        except AnalyticsError as exc:
+                            return item, {}, str(exc)
 
-            collected = await asyncio.gather(*(collect(item) for item in media_items))
+                collected = []
+                tasks = [asyncio.create_task(collect(item)) for item in media_items]
+                for completed, task in enumerate(asyncio.as_completed(tasks), start=1):
+                    collected.append(await task)
+                    _set_sync_progress(
+                        percent=10.0 + (completed / total * 75.0 if total else 75.0),
+                        current=completed,
+                        message=f"Statistiques Instagram : {completed} / {total}",
+                    )
 
-        succeeded = 0
-        failed = 0
-        first_error = ""
-        for item, metrics, error in collected:
-            await asyncio.to_thread(_store_media_snapshot, item, metrics, error)
-            if metrics:
-                succeeded += 1
-            elif error:
-                failed += 1
-                first_error = first_error or error
-        now = utc_now()
-        state = {
-            "last_synced_at": now,
-            "media_found": len(media_items),
-            "metrics_updated": succeeded,
-            "metrics_failed": failed,
-            "last_error": first_error,
-            "permission_required": bool(failed and not succeeded),
-        }
-        await asyncio.to_thread(
-            database().analytics_state.update_one,
-            {"_id": "primary"},
-            {"$set": state},
-            upsert=True,
+            succeeded = 0
+            failed = 0
+            first_error = ""
+            _set_sync_progress(
+                phase="saving",
+                percent=86.0,
+                current=0,
+                message="Enregistrement des statistiques…",
+            )
+            for saved, (item, metrics, error) in enumerate(collected, start=1):
+                await asyncio.to_thread(_store_media_snapshot, item, metrics, error)
+                if metrics:
+                    succeeded += 1
+                elif error:
+                    failed += 1
+                    first_error = first_error or error
+                _set_sync_progress(
+                    percent=86.0 + (saved / total * 13.0 if total else 13.0),
+                    current=saved,
+                    message=f"Enregistrement : {saved} / {total}",
+                )
+            now = utc_now()
+            state = {
+                "last_synced_at": now,
+                "media_found": len(media_items),
+                "metrics_updated": succeeded,
+                "metrics_failed": failed,
+                "last_error": first_error,
+                "permission_required": bool(failed and not succeeded),
+            }
+            await asyncio.to_thread(
+                database().analytics_state.update_one,
+                {"_id": "primary"},
+                {"$set": state},
+                upsert=True,
+            )
+            _set_sync_progress(
+                running=False,
+                phase="complete",
+                percent=100.0,
+                current=total,
+                message=f"Synchronisation terminée : {succeeded} publication(s) mise(s) à jour.",
+                finished_at=_iso(now),
+            )
+            return state
+    except Exception as exc:
+        finished_at = utc_now()
+        message = str(exc) if isinstance(exc, AnalyticsError) else "Synchronisation Instagram interrompue."
+        _set_sync_progress(
+            running=False,
+            phase="failed",
+            message=message,
+            finished_at=_iso(finished_at),
         )
-        return state
+        raise
 
 
 def _number(metrics: dict[str, Any], *names: str) -> float:
@@ -364,6 +448,15 @@ def _post_values(document: dict[str, Any]) -> dict[str, float]:
         "shares": shares,
         "interactions": interactions,
         "engagement_rate": engagement_rate,
+        "like_rate": likes / denominator * 100 if denominator else 0.0,
+        "comment_rate": comments / denominator * 100 if denominator else 0.0,
+        "save_rate": saved / denominator * 100 if denominator else 0.0,
+        "share_rate": shares / denominator * 100 if denominator else 0.0,
+        "views_per_reached_account": views / reach if reach else 0.0,
+        "avg_watch_time_ms": _number(metrics, "ig_reels_avg_watch_time"),
+        "total_watch_time_ms": _number(metrics, "ig_reels_video_view_total_time"),
+        "replays": _number(metrics, "clips_replays_count"),
+        "skip_rate": _number(metrics, "reels_skip_rate"),
     }
 
 
@@ -527,17 +620,31 @@ def build_analytics_dashboard(
             time_groups[(local_date.weekday(), local_date.hour)].append(values)
         previous_metrics = document.get("previous_metrics")
         previous_values = _post_values({"latest_metrics": previous_metrics or {}})
+        latest_metrics = document.get("latest_metrics") or {}
+        available_metrics = sorted(
+            str(name)
+            for name, value in latest_metrics.items()
+            if isinstance(value, (int, float))
+        )
         posts.append(
             {
                 "id": str(document.get("_id")),
                 "title": str(document.get("title") or "Publication Instagram"),
                 "hook": str(document.get("hook") or ""),
                 "media_kind": str(document.get("media_kind") or "unknown"),
+                "media_product_type": str(document.get("media_product_type") or ""),
                 "timestamp": _iso(timestamp),
                 "permalink": str(document.get("permalink") or ""),
                 "thumbnail_url": str(document.get("thumbnail_url") or ""),
+                "available_metrics": available_metrics,
+                "previous_synced_at": _iso(document.get("previous_synced_at")),
                 **values,
                 "delta_views": values["views"] - previous_values["views"] if previous_metrics is not None else None,
+                "delta_reach": values["reach"] - previous_values["reach"] if previous_metrics is not None else None,
+                "delta_likes": values["likes"] - previous_values["likes"] if previous_metrics is not None else None,
+                "delta_comments": values["comments"] - previous_values["comments"] if previous_metrics is not None else None,
+                "delta_saved": values["saved"] - previous_values["saved"] if previous_metrics is not None else None,
+                "delta_shares": values["shares"] - previous_values["shares"] if previous_metrics is not None else None,
                 "delta_interactions": values["interactions"] - previous_values["interactions"] if previous_metrics is not None else None,
             }
         )

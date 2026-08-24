@@ -190,6 +190,26 @@ def test_carousel_image_item_has_no_caption(monkeypatch):
     assert "caption" not in payload
 
 
+def test_carousel_video_item_uses_video_container(monkeypatch):
+    FakeAsyncClient.response = FakeResponse({"id": "video-child-container"})
+    monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
+
+    result = asyncio.run(
+        instagram.create_carousel_video_container(
+            user_id="ig-user",
+            access_token="server-secret",
+            video_url="https://example.com/clip.mp4",
+        )
+    )
+
+    payload = FakeAsyncClient.last_request["data"]
+    assert result == "video-child-container"
+    assert payload["media_type"] == "VIDEO"
+    assert payload["video_url"] == "https://example.com/clip.mp4"
+    assert payload["is_carousel_item"] == "true"
+    assert "caption" not in payload
+
+
 def test_carousel_parent_uses_ordered_children(monkeypatch):
     FakeAsyncClient.response = FakeResponse({"id": "carousel-container"})
     monkeypatch.setattr(instagram.httpx, "AsyncClient", FakeAsyncClient)
@@ -208,3 +228,44 @@ def test_carousel_parent_uses_ordered_children(monkeypatch):
     assert payload["media_type"] == "CAROUSEL"
     assert payload["children"] == "child-1,child-2,child-3"
     assert payload["caption"] == "Caption carousel"
+
+
+def test_publish_carousel_accepts_ordered_images_and_videos(monkeypatch):
+    created_items = []
+    parent_children = []
+
+    async def fake_create_item(**kwargs):
+        created_items.append(kwargs["media_item"])
+        return f"child-{len(created_items)}"
+
+    async def fake_wait(**kwargs):
+        return None
+
+    async def fake_create_parent(**kwargs):
+        parent_children.extend(kwargs["children"])
+        return "parent-container"
+
+    async def fake_publish(**kwargs):
+        return "published-media"
+
+    monkeypatch.setattr(instagram, "create_carousel_item_container", fake_create_item)
+    monkeypatch.setattr(instagram, "wait_until_ready", fake_wait)
+    monkeypatch.setattr(instagram, "create_carousel_container", fake_create_parent)
+    monkeypatch.setattr(instagram, "publish_container", fake_publish)
+
+    media_items = [
+        {"url": "https://example.com/photo.jpg", "media_type": "image"},
+        {"url": "https://example.com/clip.mp4", "media_type": "video"},
+    ]
+    result = asyncio.run(
+        instagram.publish_carousel(
+            user_id="ig-user",
+            access_token="server-secret",
+            media_items=media_items,
+            caption="Carrousel mixte",
+        )
+    )
+
+    assert created_items == media_items
+    assert parent_children == ["child-1", "child-2"]
+    assert result["media_id"] == "published-media"

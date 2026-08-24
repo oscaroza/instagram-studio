@@ -131,6 +131,50 @@ function formatBytes(value){
   while(amount>=1024&&index<units.length-1){amount/=1024;index++;}
   return `${amount.toFixed(index>1?1:0)} ${units[index]}`;
 }
+function formatUploadDuration(seconds){
+  if(!Number.isFinite(seconds)||seconds<0)return 'Calcul du temps restant…';
+  if(seconds<1)return 'Moins d’une seconde restante';
+  if(seconds<60)return `${Math.ceil(seconds)} s restantes`;
+  const minutes=Math.floor(seconds/60),remaining=Math.ceil(seconds%60);
+  return `${minutes} min ${String(remaining).padStart(2,'0')} s restantes`;
+}
+function hideUploadTransfer(){
+  $('uploadTransferProgress').classList.add('hidden');
+}
+function showUploadTransfer({title,loaded,total,startedAt,processing=false}){
+  const safeTotal=Math.max(1,total),safeLoaded=Math.min(safeTotal,Math.max(0,loaded));
+  const percent=Math.min(100,(safeLoaded/safeTotal)*100);
+  const elapsed=Math.max(.001,(performance.now()-startedAt)/1000);
+  const speed=safeLoaded/elapsed;
+  $('uploadTransferProgress').classList.remove('hidden');
+  $('uploadTransferTitle').textContent=title;
+  $('uploadTransferPercent').textContent=`${percent.toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:1})} %`;
+  $('uploadTransferBar').value=percent;
+  $('uploadTransferBar').setAttribute('aria-valuetext',`${percent.toFixed(1)} pour cent`);
+  $('uploadTransferBytes').textContent=`${formatBytes(safeLoaded)} / ${formatBytes(total)}${speed>0?` • ${formatBytes(speed)}/s`:''}`;
+  $('uploadTransferEta').textContent=processing?'Envoi terminé • vérification du fichier…':formatUploadDuration(speed>0?(safeTotal-safeLoaded)/speed:Infinity);
+}
+function uploadMediaFile(file,onProgress){
+  return new Promise((resolve,reject)=>{
+    const request=new XMLHttpRequest();
+    request.open('POST','/api/upload');
+    request.responseType='json';
+    request.timeout=10*60*1000;
+    request.upload.addEventListener('progress',event=>{
+      if(event.lengthComputable)onProgress(event.loaded,event.total);
+    });
+    request.addEventListener('load',()=>{
+      if(request.status===401){expireStudioSession();reject(new Error('Session expirée. Actualise la page pour te reconnecter.'));return;}
+      let data=request.response;
+      if(!data){try{data=JSON.parse(request.responseText||'{}');}catch{reject(new Error(`Réponse serveur invalide (HTTP ${request.status}).`));return;}}
+      if(request.status<200||request.status>=300||!data.ok){reject(new Error(data.error||`Échec de l’upload (HTTP ${request.status}).`));return;}
+      resolve(data);
+    });
+    request.addEventListener('error',()=>reject(new Error('Connexion interrompue pendant l’upload.')));
+    request.addEventListener('timeout',()=>reject(new Error('L’upload a pris trop de temps. Réessaie.')));
+    const form=new FormData();form.append('file',file);request.send(form);
+  });
+}
 async function api(url, options={}){
   const response=await fetch(url,options);
   if(response.status===401){expireStudioSession();throw new Error('Session expirée. Actualise la page pour te reconnecter.');}
@@ -200,11 +244,11 @@ function activateTab(name){
   if(window.matchMedia('(max-width:760px)').matches){tab.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});}
   history.replaceState({},'',`?tab=${name}`);
   if(name==='drafts')renderDrafts();
-  if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();loadPasskeys();}
+  if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();loadPasskeys();loadR2Usage();}
   if(name==='customize')loadAppearance();
   if(name==='library')loadLibrary();
   if(name==='calendar')loadCalendar();
-  if(name==='stats'){loadAnalytics();loadAssistantChat();}
+  if(name==='stats'){loadAnalytics();loadAssistantChat();resumeAnalyticsSyncProgress();}
   if(name==='notifications')refreshPushState();
 }
 for(const tab of document.querySelectorAll('.tab')){
@@ -242,14 +286,19 @@ function syncMediaFields(){
   $('libraryId').value=selectedMediaItems.length===1?(first.library_id||''):'';
   $('thumbnailUrl').value=first.thumbnail_url||'';
 }
+function isCarouselMode(kind=$('mediaKind').value){
+  return kind==='carousel'||kind==='carousel_video';
+}
 function renderSelectedMedia(){
   const root=$('selectedMedia');root.innerHTML='';
-  const reorderable=$('mediaKind').value==='carousel'&&selectedMediaItems.length>1;
+  const reorderable=isCarouselMode()&&selectedMediaItems.length>1;
   $('carouselOrderHelp').classList.toggle('hidden',!reorderable);
   selectedMediaItems.forEach((item,index)=>{
     const row=document.createElement('div');row.className='selected-media-item';row.dataset.index=index;
-    row.innerHTML='<span class="media-drag-handle" role="button" tabindex="0" aria-label="Déplacer ce média">⋮⋮</span><img alt=""><div><strong></strong><span></span></div><button class="ghost remove-media" type="button">Retirer</button>';
-    row.querySelector('img').src=item.thumbnail_url||item.url||'/static/icons/icon-192.png';
+    const previewTag=item.media_type==='video'?'video':'img';
+    row.innerHTML=`<span class="media-drag-handle" role="button" tabindex="0" aria-label="Déplacer ce média">⋮⋮</span><${previewTag} aria-label="Aperçu du média"></${previewTag}><div><strong></strong><span></span></div><button class="ghost remove-media" type="button">Retirer</button>`;
+    const preview=row.querySelector(previewTag);preview.src=item.thumbnail_url||item.url||'/static/icons/icon-192.png';
+    if(previewTag==='video'){preview.muted=true;preview.playsInline=true;preview.preload='metadata';}
     row.querySelector('strong').textContent=item.name||`Média ${index+1}`;
     row.querySelector('div span').textContent=`Position ${index+1} • ${item.media_type==='image'?'Photo JPEG':'Vidéo'}${item.size?` • ${formatBytes(item.size)}`:''}`;
     const handle=row.querySelector('.media-drag-handle');handle.classList.toggle('hidden',!reorderable);
@@ -268,7 +317,7 @@ function reorderSelectedMedia(fromIndex,toIndex){
   const [moved]=selectedMediaItems.splice(fromIndex,1);selectedMediaItems.splice(toIndex,0,moved);syncMediaFields();renderSelectedMedia();
 }
 function startMediaPointerDrag(event,row,root){
-  if($('mediaKind').value!=='carousel'||selectedMediaItems.length<2)return;
+  if(!isCarouselMode()||selectedMediaItems.length<2)return;
   event.preventDefault();const handle=event.currentTarget;handle.setPointerCapture?.(event.pointerId);row.classList.add('dragging');
   const finish=()=>{
     const reordered=[...root.children].map(element=>selectedMediaItems[Number(element.dataset.index)]).filter(Boolean);
@@ -372,7 +421,7 @@ $('copyPreparedCaptionBtn').addEventListener('click',async()=>{
 });
 $('openInstagramFallbackBtn').addEventListener('click',()=>{location.href='instagram://camera';});
 function clearMediaSelection(){
-  clearPreparedInstagramShare();selectedMediaItems=[];$('videoFile').value='';$('videoUrl').value='';$('libraryId').value='';$('thumbnailUrl').value='';syncMediaFields();renderSelectedMedia();hideNotice('uploadProgress');
+  clearPreparedInstagramShare();selectedMediaItems=[];$('videoFile').value='';$('videoUrl').value='';$('libraryId').value='';$('thumbnailUrl').value='';syncMediaFields();renderSelectedMedia();hideUploadTransfer();hideNotice('uploadProgress');
 }
 function configureMediaKind(clear=true){
   const kind=$('mediaKind').value,file=$('videoFile');
@@ -380,36 +429,52 @@ function configureMediaKind(clear=true){
   if(kind==='reel'){
     file.accept='video/mp4,video/quicktime,video/x-m4v';file.multiple=false;
     $('mediaUploadLabel').textContent='Choisir une vidéo';$('mediaUploadHelp').textContent='MP4 / MOV / M4V';$('mediaUrlLabel').textContent='URL vidéo publique';
+  }else if(kind==='carousel_video'){
+    file.accept='video/mp4,video/quicktime,video/x-m4v';file.multiple=true;
+    $('mediaUploadLabel').textContent='Choisir 2 à 10 vidéos';$('mediaUploadHelp').textContent=`MP4 / MOV / M4V • max ${document.body.dataset.maxUploadMb||250} Mo par vidéo`;$('mediaUrlLabel').textContent='URL vidéo publique';
   }else{
-    file.accept='image/jpeg';file.multiple=kind==='carousel';
+    file.accept='image/jpeg';file.multiple=isCarouselMode(kind);
     $('mediaUploadLabel').textContent=kind==='carousel'?'Choisir 2 à 10 photos':'Choisir une photo';$('mediaUploadHelp').textContent='JPG / JPEG • 8 Mo max par photo';$('mediaUrlLabel').textContent='URL photo JPEG publique';
   }
-  $('publicUrlBlock').classList.toggle('hidden',kind==='carousel');
+  $('publicUrlBlock').classList.toggle('hidden',isCarouselMode(kind));
   $('publicationModeField').classList.toggle('hidden',kind!=='reel');
   $('muteOption').classList.toggle('hidden',kind!=='reel');
   if(kind!=='reel'){$('publicationMode').value='normal';$('muteAudio').checked=false;}
-  $('carouselOrderHelp').classList.toggle('hidden',kind!=='carousel'||selectedMediaItems.length<2);
+  $('carouselOrderHelp').classList.toggle('hidden',!isCarouselMode(kind)||selectedMediaItems.length<2);
   updatePublicationOptions();
 }
 $('mediaKind').addEventListener('change',()=>configureMediaKind(true));
 $('videoFile').addEventListener('change',async(e)=>{
-  const files=[...e.target.files];if(!files.length)return;
-  const kind=$('mediaKind').value,expected=kind==='reel'?'video':'image';
-  if(kind==='carousel'&&selectedMediaItems.length+files.length>10){setNotice('uploadProgress','Un carrousel contient au maximum 10 photos.','error');return;}
-  if(kind!=='carousel')selectedMediaItems=[];
+  const fileInput=e.currentTarget,files=[...fileInput.files];if(!files.length)return;
+  const kind=$('mediaKind').value,expected=kind==='reel'||kind==='carousel_video'?'video':'image';
+  if(isCarouselMode(kind)&&selectedMediaItems.length+files.length>10){setNotice('uploadProgress','Un carrousel contient au maximum 10 médias.','error');fileInput.value='';return;}
+  if(!isCarouselMode(kind))selectedMediaItems=[];
+  const totalBytes=files.reduce((total,file)=>total+file.size,0);
+  let completedBytes=0;
+  const startedAt=performance.now();
+  const uploadZone=fileInput.closest('.upload-zone');
+  fileInput.disabled=true;uploadZone?.classList.add('uploading');
+  hideNotice('uploadProgress');
   try{
-    for(const file of files){
-      setNotice('uploadProgress',`Upload de ${file.name}…`);
-      const form=new FormData();form.append('file',file);
-      const data=await api('/api/upload',{method:'POST',body:form});
+    for(const [index,file] of files.entries()){
+      const title=files.length>1?`Envoi ${index+1}/${files.length} • ${file.name}`:`Envoi de ${file.name}`;
+      showUploadTransfer({title,loaded:completedBytes,total:totalBytes,startedAt});
+      const data=await uploadMediaFile(file,(loaded,requestTotal)=>{
+        const fileLoaded=requestTotal>0?Math.min(file.size,(loaded/requestTotal)*file.size):Math.min(file.size,loaded);
+        showUploadTransfer({title,loaded:completedBytes+fileLoaded,total:totalBytes,startedAt,processing:requestTotal>0&&loaded>=requestTotal});
+      });
+      completedBytes+=file.size;
+      showUploadTransfer({title,loaded:completedBytes,total:totalBytes,startedAt,processing:true});
       if(data.media_type!==expected)throw new Error('Le fichier ne correspond pas au type de publication choisi.');
       selectedMediaItems.push({url:data.url,library_id:'',thumbnail_url:data.media_type==='image'?data.url:'',media_type:data.media_type,name:file.name,size:data.size});
+      syncMediaFields();renderSelectedMedia();
     }
     syncMediaFields();renderSelectedMedia();
-    const label=kind==='carousel'?`${selectedMediaItems.length} photos prêtes`:`${kind==='photo'?'Photo':'Vidéo'} prête`;
+    const label=isCarouselMode(kind)?`${selectedMediaItems.length} ${kind==='carousel_video'?'vidéos':'photos'} prêtes`:`${kind==='photo'?'Photo':'Vidéo'} prête`;
+    hideUploadTransfer();
     setNotice('uploadProgress',`${label} avec une URL publique temporaire.`,'success');
-  }catch(err){setNotice('uploadProgress',err.message,'error');}
-  finally{e.target.value='';}
+  }catch(err){hideUploadTransfer();setNotice('uploadProgress',err.message,'error');}
+  finally{fileInput.disabled=false;uploadZone?.classList.remove('uploading');fileInput.value='';}
 });
 $('videoUrl').addEventListener('input',()=>{
   if(selectedMediaItems.length){selectedMediaItems=[];$('libraryId').value='';$('thumbnailUrl').value='';$('mediaItemsJson').value='[]';renderSelectedMedia();}
@@ -454,7 +519,7 @@ function renderDrafts(){
 
 function updatePublicationOptions(){
   const scheduled=$('scheduleEnabled').checked,music=$('musicEnabled').checked,kind=$('mediaKind').value;
-  const typeLabel={reel:'le Reel',photo:'la photo',carousel:'le carrousel'}[kind];
+  const typeLabel={reel:'le Reel',photo:'la photo',carousel:'le carrousel photo',carousel_video:'le carrousel vidéo'}[kind];
   $('scheduleFields').classList.toggle('hidden',!scheduled);
   $('musicHelp').classList.toggle('hidden',!music);
   $('publishBtn').textContent=scheduled?`Programmer ${typeLabel}`:music?'Finaliser dans Instagram':`Publier ${typeLabel}`;
@@ -465,10 +530,10 @@ $('musicEnabled').addEventListener('change',updatePublicationOptions);
 
 function publicationPayload(){
   const fullCaption=[$('hook').value.trim(),$('caption').value.trim(),$('hashtags').value.trim()].filter(Boolean).join('\n\n');
-  const mediaKind=$('mediaKind').value;
+  const selectedKind=$('mediaKind').value,mediaKind=selectedKind==='carousel_video'?'carousel':selectedKind;
   let items=selectedMediaItems.map(item=>({...item}));
   const publicUrl=$('videoUrl').value.trim();
-  if(mediaKind!=='carousel'&&publicUrl&&(!items.length||items[0].url!==publicUrl)){
+  if(!isCarouselMode(selectedKind)&&publicUrl&&(!items.length||items[0].url!==publicUrl)){
     items=[{url:publicUrl,library_id:$('libraryId').value,thumbnail_url:$('thumbnailUrl').value,media_type:mediaKind==='reel'?'video':'image',name:mediaKind==='reel'?'Vidéo par URL':'Photo par URL'}];
   }
   return {
@@ -485,7 +550,7 @@ function publicationPayload(){
 
 $('publishBtn').addEventListener('click',async()=>{
   const payload=publicationPayload();
-  if(payload.media_kind==='carousel'&&(payload.media_items.length<2||payload.media_items.length>10)){setNotice('actionMessage','Ajoute entre 2 et 10 photos JPEG au carrousel.','error');return;}
+  if(payload.media_kind==='carousel'&&(payload.media_items.length<2||payload.media_items.length>10)){setNotice('actionMessage','Ajoute entre 2 et 10 médias au carrousel.','error');return;}
   if(payload.media_kind!=='carousel'&&payload.media_items.length!==1){setNotice('actionMessage','Ajoute un média ou une URL avant de continuer.','error');return;}
   const scheduled=$('scheduleEnabled').checked,music=$('musicEnabled').checked;
   if(scheduled){
@@ -661,6 +726,54 @@ async function loadV2Status(){
   }
 }
 
+function renderR2Quota(prefix,used,limit,formatter){
+  const safeUsed=Math.max(0,Number(used)||0),safeLimit=Math.max(1,Number(limit)||1),percent=safeUsed/safeLimit*100;
+  const bar=$(prefix+'Bar'),track=bar.parentElement;
+  bar.style.width=`${Math.min(100,percent)}%`;
+  track.classList.toggle('warn',percent>=75&&percent<90);track.classList.toggle('danger',percent>=90);
+  $(prefix+'Percent').textContent=`${percent.toLocaleString('fr-FR',{maximumFractionDigits:1})} %`;
+  $(prefix+'Value').textContent=`${formatter(safeUsed)} / ${formatter(safeLimit)}`;
+  return Math.max(0,safeLimit-safeUsed);
+}
+function formatR2Storage(value){
+  const bytes=Math.max(0,Number(value)||0);
+  if(bytes<1_000_000_000)return `${(bytes/1_000_000).toLocaleString('fr-FR',{maximumFractionDigits:1})} Mo`;
+  return `${(bytes/1_000_000_000).toLocaleString('fr-FR',{maximumFractionDigits:2})} Go`;
+}
+async function loadR2Usage(){
+  const button=$('refreshR2UsageBtn');button.disabled=true;button.textContent='Actualisation…';hideNotice('r2UsageNotice');
+  try{
+    const data=await api('/api/r2/usage'),usage=data.usage||{};
+    const alerts=[];
+    const accountStorage=usage.account_storage_bytes;
+    const displayedStorage=accountStorage===null||accountStorage===undefined?usage.bucket_storage_bytes:accountStorage;
+    const storageRemaining=renderR2Quota('r2Storage',displayedStorage,usage.free_storage_bytes||10000000000,formatR2Storage);
+    $('r2StorageRemaining').textContent=`${formatR2Storage(storageRemaining)} avant 10 Go • uploads bloqués à ${formatR2Storage(usage.studio_storage_limit_bytes||9000000000)}`;
+    if(Number(displayedStorage)/(Number(usage.free_storage_bytes)||10000000000)>=.8)alerts.push('Le stockage R2 dépasse 80 % du quota gratuit.');
+    if(usage.analytics_ready){
+      const remainingA=renderR2Quota('r2ClassA',usage.class_a?.used,usage.class_a?.limit||1000000,formatStat);
+      const remainingB=renderR2Quota('r2ClassB',usage.class_b?.used,usage.class_b?.limit||10000000,formatStat);
+      $('r2ClassARemaining').textContent=`${formatStat(remainingA)} restantes • écritures et listes`;
+      $('r2ClassBRemaining').textContent=`${formatStat(remainingB)} restantes • lectures`;
+      if(Number(usage.class_a?.percent)>=80)alerts.push('Les opérations de classe A dépassent 80 % du quota gratuit.');
+      if(Number(usage.class_b?.percent)>=80)alerts.push('Les opérations de classe B dépassent 80 % du quota gratuit.');
+      const unknown=Number(usage.unknown_operations)||0;
+      if(unknown)alerts.push(`${formatStat(unknown)} opération(s) Cloudflare n’ont pas pu être classées automatiquement.`);
+    }else{
+      renderR2Quota('r2ClassA',0,1000000,formatStat);renderR2Quota('r2ClassB',0,10000000,formatStat);
+      $('r2ClassAValue').textContent='Token Analytics manquant';$('r2ClassBValue').textContent='Token Analytics manquant';
+      $('r2ClassARemaining').textContent='Ajoute CLOUDFLARE_ANALYTICS_API_TOKEN';$('r2ClassBRemaining').textContent='Permission Account Analytics — Read';
+      setNotice('r2UsageNotice',usage.analytics_error||'Ajoute CLOUDFLARE_ANALYTICS_API_TOKEN dans Render pour afficher les opérations mensuelles. Le token doit uniquement avoir Account Analytics — Read.','error');
+    }
+    if(usage.bucket_storage_error)alerts.push(usage.bucket_storage_error);
+    if(usage.analytics_ready&&alerts.length)setNotice('r2UsageNotice',`${alerts.join('\n')} Vérifie le dashboard Cloudflare avant d’approcher les limites.`,'error');
+    const start=statsDate(usage.period_start);
+    $('r2UsageMeta').textContent=`Mois en cours depuis le ${start}${usage.bucket_name?` • Bucket Studio « ${usage.bucket_name} » : ${formatR2Storage(usage.bucket_storage_bytes)}`:''} • stockage affiché : ${accountStorage===null||accountStorage===undefined?'mesure du bucket':'dernier relevé du compte Cloudflare'}.`;
+  }catch(err){setNotice('r2UsageNotice',err.message,'error');$('r2UsageMeta').textContent='Statistiques Cloudflare indisponibles.';}
+  finally{button.disabled=false;button.textContent='Actualiser Cloudflare';}
+}
+$('refreshR2UsageBtn').addEventListener('click',loadR2Usage);
+
 async function loadLibrary(){
   const root=$('libraryGrid');root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('libraryNotice');
   try{
@@ -712,8 +825,10 @@ function renderLibrary(){
       card.querySelector('.usage').textContent=active?`Utilisé dans ${active} programmation(s) active(s)`:uses?`Utilisé ${uses} fois`:'Jamais utilisé';
       card.querySelector('.use').onclick=()=>{
         const mediaItem={url:item.secure_url,library_id:item.id,thumbnail_url:item.thumbnail_url||'',media_type:itemType,name:item.original_filename||'Média',size:item.bytes||0};
-        if(itemType==='image'&&$('mediaKind').value==='carousel'){
-          if(selectedMediaItems.length>=10){setNotice('libraryNotice','Le carrousel contient déjà 10 photos.','error');return;}
+        const selectedKind=$('mediaKind').value;
+        const matchesCarousel=(itemType==='image'&&selectedKind==='carousel')||(itemType==='video'&&selectedKind==='carousel_video');
+        if(matchesCarousel){
+          if(selectedMediaItems.length>=10){setNotice('libraryNotice','Le carrousel contient déjà 10 médias.','error');return;}
           selectedMediaItems.push(mediaItem);
         }else{
           $('mediaKind').value=itemType==='image'?'photo':'reel';configureMediaKind(true);selectedMediaItems=[mediaItem];
@@ -889,6 +1004,27 @@ function renderGrowthChart(series=[]){
   meta.textContent=`${series.length} point(s) de relevé • ${signed(last.delta_views)} vues • ${signed(last.delta_reach)} de portée depuis le premier point`;
 }
 function analyticsPostLabel(item){return item.hook||item.title||'Sans hook enregistré';}
+function formatStatDuration(milliseconds){
+  const seconds=Math.max(0,Number(milliseconds)||0)/1000;
+  if(seconds<60)return `${seconds.toLocaleString('fr-FR',{maximumFractionDigits:1})} s`;
+  const minutes=Math.floor(seconds/60);const remainder=Math.round(seconds%60);
+  return `${minutes} min ${String(remainder).padStart(2,'0')} s`;
+}
+function formatStatRate(value){return `${Number(value||0).toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:2})} %`;}
+function formatSkipRate(value){const number=Number(value)||0;return formatStatRate(Math.abs(number)<=1?number*100:number);}
+function appendPostDetail(root,label,value,help=''){
+  const card=document.createElement('div');card.className='stats-post-detail';
+  const labelNode=document.createElement('span');labelNode.textContent=label;
+  const valueNode=document.createElement('strong');valueNode.textContent=value;
+  card.append(labelNode,valueNode);
+  if(help){const helpNode=document.createElement('small');helpNode.textContent=help;card.appendChild(helpNode);}
+  root.appendChild(card);
+}
+function appendPostDelta(root,label,value){
+  if(value===null||value===undefined)return;
+  const number=Number(value)||0;
+  appendPostDetail(root,label,`${number>0?'+':''}${formatStat(number)}`,number===0?'Stable depuis le relevé précédent':'Depuis le relevé précédent');
+}
 function sortedAnalyticsPosts(){
   const items=[...analyticsPosts];
   const mode=$('statsSort').value;
@@ -913,7 +1049,7 @@ function sortedAnalyticsPosts(){
 function renderAnalyticsPosts(){
   const posts=$('statsPosts');posts.innerHTML='';
   for(const item of sortedAnalyticsPosts()){
-    const row=document.createElement('article');row.className='stats-post';row.innerHTML='<div class="stats-post-main"><span class="pill kind"></span><strong class="hook"></strong><span class="date"></span></div><div class="stats-post-metrics"><span class="views"></span><span class="likes"></span><span class="reach"></span><span class="rate"></span><span class="delta"></span></div><a class="ghost permalink" target="_blank" rel="noopener">Voir</a>';
+    const row=document.createElement('article');row.className='stats-post';row.innerHTML='<div class="stats-post-main"><span class="pill kind"></span><strong class="hook"></strong><span class="date"></span></div><div class="stats-post-metrics"><span class="views"></span><span class="likes"></span><span class="reach"></span><span class="rate"></span><span class="delta"></span></div><a class="ghost permalink" target="_blank" rel="noopener">Voir</a><details class="stats-post-details"><summary>Plus de statistiques</summary><div class="stats-post-detail-grid"></div></details>';
     row.querySelector('.kind').textContent={reel:'Reel',photo:'Photo',carousel:'Carrousel'}[item.media_kind]||'Post';
     row.querySelector('.hook').textContent=analyticsPostLabel(item);
     row.querySelector('.date').textContent=item.timestamp?new Date(item.timestamp).toLocaleString('fr-FR'):'Date indisponible';
@@ -921,8 +1057,29 @@ function renderAnalyticsPosts(){
     row.querySelector('.likes').textContent=`${formatStat(item.likes)} likes`;
     row.querySelector('.reach').textContent=`${formatStat(item.reach)} portée`;
     row.querySelector('.rate').textContent=`${Number(item.engagement_rate||0).toFixed(1)} % engagement`;
-    const delta=Number(item.delta_views||0);row.querySelector('.delta').textContent=delta?`${delta>0?'+':''}${formatStat(delta)} vues depuis le relevé précédent`:'Premier relevé';
-    const link=row.querySelector('.permalink');if(item.permalink)link.href=item.permalink;else link.classList.add('hidden');posts.appendChild(row);
+    const hasPrevious=item.delta_views!==null&&item.delta_views!==undefined;const delta=Number(item.delta_views||0);
+    row.querySelector('.delta').textContent=!hasPrevious?'Premier relevé':delta?`${delta>0?'+':''}${formatStat(delta)} vues depuis le relevé précédent`:'Vues stables depuis le relevé précédent';
+    const link=row.querySelector('.permalink');if(item.permalink)link.href=item.permalink;else link.classList.add('hidden');
+    const available=new Set(Array.isArray(item.available_metrics)?item.available_metrics:[]);const details=row.querySelector('.stats-post-detail-grid');const rateBasis=Number(item.reach)>0?'portée':'vues';
+    appendPostDetail(details,'Interactions',formatStat(item.interactions),`Taux global : ${formatStatRate(item.engagement_rate)}`);
+    if(available.has('comments'))appendPostDetail(details,'Commentaires',formatStat(item.comments),`Taux / ${rateBasis} : ${formatStatRate(item.comment_rate)}`);
+    if(available.has('saved'))appendPostDetail(details,'Enregistrements',formatStat(item.saved),`Taux / ${rateBasis} : ${formatStatRate(item.save_rate)}`);
+    if(available.has('shares'))appendPostDetail(details,'Partages',formatStat(item.shares),`Taux / ${rateBasis} : ${formatStatRate(item.share_rate)}`);
+    if(available.has('likes'))appendPostDetail(details,"Taux de J’aime",formatStatRate(item.like_rate),`Calculé sur la ${rateBasis}`);
+    if(Number(item.reach)>0&&Number(item.views)>0)appendPostDetail(details,'Vues par compte touché',Number(item.views_per_reached_account||0).toLocaleString('fr-FR',{minimumFractionDigits:1,maximumFractionDigits:2}),'Plus de 1 peut inclure des relectures');
+    if(available.has('ig_reels_avg_watch_time'))appendPostDetail(details,'Visionnage moyen',formatStatDuration(item.avg_watch_time_ms),'Statistique Reel');
+    if(available.has('ig_reels_video_view_total_time'))appendPostDetail(details,'Temps regardé total',formatStatDuration(item.total_watch_time_ms),'Statistique Reel');
+    if(available.has('clips_replays_count'))appendPostDetail(details,'Relectures',formatStat(item.replays),'Statistique Reel');
+    if(available.has('reels_skip_rate'))appendPostDetail(details,'Taux de passage',formatSkipRate(item.skip_rate),'Statistique Reel fournie par Meta');
+    appendPostDelta(details,'Évolution des vues',item.delta_views);
+    appendPostDelta(details,'Évolution de la portée',item.delta_reach);
+    appendPostDelta(details,"Évolution des J’aime",item.delta_likes);
+    appendPostDelta(details,'Évolution des commentaires',item.delta_comments);
+    appendPostDelta(details,'Évolution des enregistrements',item.delta_saved);
+    appendPostDelta(details,'Évolution des partages',item.delta_shares);
+    appendPostDelta(details,'Évolution des interactions',item.delta_interactions);
+    row.querySelector('.stats-post-details summary').textContent=`Plus de statistiques (${details.children.length})`;
+    posts.appendChild(row);
   }
   if(!posts.children.length)posts.innerHTML='<p class="muted">Aucune publication synchronisée.</p>';
 }
@@ -981,16 +1138,49 @@ async function loadAnalytics(){
   try{const data=await api(`/api/analytics/dashboard?period_days=${statsPeriodValue()}`);renderAnalytics(data);}
   catch(err){setNotice('statsNotice',err.message,'error');}
 }
+let analyticsSyncPollTimer=null;
+function renderAnalyticsSyncProgress(progress={}){
+  const root=$('statsSyncProgress'),phase=progress.phase||'idle';
+  root.classList.toggle('hidden',phase==='idle');
+  root.classList.toggle('failed',phase==='failed');
+  root.classList.toggle('complete',phase==='complete');
+  if(phase==='idle')return;
+  const percent=Math.max(0,Math.min(100,Number(progress.percent)||0));
+  $('statsSyncProgressBar').value=percent;
+  $('statsSyncProgressPercent').textContent=`${percent.toLocaleString('fr-FR',{maximumFractionDigits:1})} %`;
+  $('statsSyncProgressMessage').textContent=progress.message||'Synchronisation Instagram…';
+  const total=Number(progress.total)||0,current=Number(progress.current)||0;
+  const phaseLabels={preparing:'Préparation',listing:'Liste des publications',insights:'Statistiques Meta',saving:'Enregistrement',complete:'Terminé',failed:'Interrompu'};
+  $('statsSyncProgressDetail').textContent=total&&['insights','saving','complete'].includes(phase)?`${current} publication(s) sur ${total} • ${phaseLabels[phase]||phase}`:phaseLabels[phase]||'Synchronisation en cours';
+  const button=$('syncStatsBtn');button.disabled=Boolean(progress.running);button.textContent=progress.running?'Synchronisation…':'Synchroniser avec Instagram';
+}
+function stopAnalyticsSyncPolling(){
+  if(analyticsSyncPollTimer){clearTimeout(analyticsSyncPollTimer);analyticsSyncPollTimer=null;}
+}
+async function pollAnalyticsSyncProgress(){
+  stopAnalyticsSyncPolling();
+  try{
+    const data=await api('/api/analytics/sync-progress'),progress=data.progress||{};
+    renderAnalyticsSyncProgress(progress);
+    if(progress.running)analyticsSyncPollTimer=setTimeout(pollAnalyticsSyncProgress,500);
+  }catch(err){
+    if($('syncStatsBtn').disabled)analyticsSyncPollTimer=setTimeout(pollAnalyticsSyncProgress,1000);
+  }
+}
+async function resumeAnalyticsSyncProgress(){await pollAnalyticsSyncProgress();}
 $('syncStatsBtn').addEventListener('click',async()=>{
   if(!confirm('Synchroniser maintenant les statistiques de tes publications depuis Meta ?'))return;
   const button=$('syncStatsBtn');button.disabled=true;button.textContent='Synchronisation…';hideNotice('statsNotice');
+  renderAnalyticsSyncProgress({running:true,phase:'preparing',percent:1,current:0,total:0,message:'Connexion à Instagram…'});
+  analyticsSyncPollTimer=setTimeout(pollAnalyticsSyncProgress,250);
   try{
     const data=await api('/api/analytics/sync',{method:'POST'});
+    await pollAnalyticsSyncProgress();
     await loadAnalytics();
     if(data.sync.permission_required)setNotice('statsNotice',data.sync.last_error,'error');
     else setNotice('statsNotice',`${data.sync.metrics_updated} publication(s) synchronisée(s).`,'success');
-  }catch(err){setNotice('statsNotice',err.message,'error');}
-  finally{button.disabled=false;button.textContent='Synchroniser avec Instagram';}
+  }catch(err){renderAnalyticsSyncProgress({running:false,phase:'failed',percent:$('statsSyncProgressBar').value,current:0,total:0,message:err.message});setNotice('statsNotice',err.message,'error');}
+  finally{stopAnalyticsSyncPolling();button.disabled=false;button.textContent='Synchroniser avec Instagram';}
 });
 $('analyzeStatsBtn').addEventListener('click',async()=>{
   if(!confirm('Envoyer à Groq uniquement les chiffres agrégés et caractéristiques anonymisées des hooks pour générer ton analyse ?'))return;

@@ -832,7 +832,7 @@ async def instagram_publish(
             result = await publish_carousel(
                 user_id=user_id,
                 access_token=access_token,
-                image_urls=[item["url"] for item in media_items],
+                media_items=media_items,
                 caption=caption,
             )
         else:

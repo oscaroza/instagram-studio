@@ -10,6 +10,7 @@ from app.services.database import database, database_configured, ensure_indexes,
 from app.services.instagram import (
     InstagramError,
     create_carousel_container,
+    create_carousel_item_container,
     create_image_container,
     create_reel_container,
     publish_container,
@@ -197,11 +198,10 @@ async def _process_publication(publication: dict) -> None:
             elif media_kind == "carousel":
                 children: list[str] = []
                 for item in media_items:
-                    child_id = await create_image_container(
+                    child_id = await create_carousel_item_container(
                         user_id=user_id,
                         access_token=access_token,
-                        image_url=item["url"],
-                        is_carousel_item=True,
+                        media_item=item,
                     )
                     await wait_until_ready(
                         creation_id=child_id,

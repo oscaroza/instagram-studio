@@ -1,16 +1,16 @@
 # Instagram Studio V2
 
-Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos JPEG et carrousels photo Instagram. La V2 conserve le flow de publication Reel immédiate de la V1 et l’OAuth Instagram direct.
+Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos JPEG et carrousels photo/vidéo Instagram. La V2 conserve le flow de publication Reel immédiate de la V1 et l’OAuth Instagram direct.
 
 ## Fonctionnalités
 
 - accès par code côté serveur avec limitation des essais, alerte de sécurité, historique et blocage manuel réversible des appareils reconnus ;
 - génération de texte avec Groq en conservant les noms `CEREBRAS_*` ;
 - publication immédiate d’un Reel normal ou Trial Reel ;
-- publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 JPEG ;
+- publication immédiate ou programmée d’une photo JPEG ou d’un carrousel de 2 à 10 photos, vidéos, ou médias mixtes ;
 - calendrier mensuel, hebdomadaire et liste, avec déplacement des programmations par glisser-déposer ;
 - bibliothèque média Cloudflare R2 avec recherche, filtres par type/date/poids/utilisation, suppression manuelle et compatibilité des anciens médias Cloudinary ;
-- réorganisation des photos d’un carrousel par glisser-déposer, au doigt ou à la souris ;
+- réorganisation des médias d’un carrousel par glisser-déposer, au doigt ou à la souris ;
 - notifications Web Push PWA : 30 minutes avant, succès, échec, workflow musique, connexion et santé du token Instagram ;
 - icône Apple/PWA et interface iPhone ;
 - compteur Meta des publications API sur les dernières 24 heures ;
@@ -64,6 +64,7 @@ R2_SECRET_ACCESS_KEY=...
 R2_BUCKET_NAME=instagram-studio
 R2_PUBLIC_BASE_URL=https://media.ton-domaine.com
 R2_FOLDER=instagram-studio
+CLOUDFLARE_ANALYTICS_API_TOKEN=...
 R2_MAX_STORAGE_GB=9
 
 # Garde ces variables tant qu’il reste d’anciens médias Cloudinary à supprimer.
@@ -86,7 +87,8 @@ Le mot de passe MongoDB doit être encodé pour une URL s’il contient des cara
 3. Dans **R2 → Manage API Tokens**, créer un token limité à ce bucket avec la permission **Object Read & Write**. Copier l’Access Key ID et la Secret Access Key dans Render ; le secret ne sera plus affiché ensuite.
 4. Dans le bucket, ouvrir **Settings → Public access** et connecter de préférence un domaine comme `media.ton-domaine.com`. L’URL `r2.dev` peut servir pour un test, mais Cloudflare la réserve au développement et la limite en débit.
 5. Mettre l’adresse HTTPS publique exacte, sans slash final, dans `R2_PUBLIC_BASE_URL`.
-6. Dans **Settings → CORS Policy**, ajouter la règle ci-dessous en remplaçant l’origine par l’adresse exacte du Studio Render, sans slash final :
+6. Dans **Manage Account → API Tokens**, créer un token personnalisé séparé avec uniquement **Account → Account Analytics → Read**, limité à ton compte. Mettre sa valeur dans `CLOUDFLARE_ANALYTICS_API_TOKEN` sur Render. Ce token en lecture seule permet au Studio d’afficher les opérations mensuelles et n’est jamais envoyé au navigateur.
+7. Dans **Settings → CORS Policy**, ajouter la règle ci-dessous en remplaçant l’origine par l’adresse exacte du Studio Render, sans slash final :
 
 ```json
 [
