@@ -1065,7 +1065,7 @@ function sortedAnalyticsPosts(){
     alpha_asc:alphabetic,
     alpha_desc:(a,b)=>alphabetic(b,a)
   };
-  return items.sort(comparators[mode]||comparators.views_desc);
+  return items.sort(comparators[mode]||comparators.date_desc);
 }
 function renderAnalyticsPosts(){
   const posts=$('statsPosts');posts.innerHTML='';
