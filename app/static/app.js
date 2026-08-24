@@ -716,7 +716,8 @@ async function loadV2Status(){
     const storageLabel=data.media_storage_label||'Stockage média';
     if(data.media_storage_ready){
       storagePill.textContent=`${storageLabel} ✓`;storagePill.className='pill ok';storageText.className='cap-on';
-      storageText.textContent=data.media_storage_limit_bytes?`Connecté • ${formatBytes(data.media_storage_usage_bytes)} / ${formatBytes(data.media_storage_limit_bytes)} protégés`:'Connecté';
+      const storageFormatter=data.media_storage_provider==='r2'?formatR2Storage:formatBytes;
+      storageText.textContent=data.media_storage_limit_bytes?`Connecté • ${storageFormatter(data.media_storage_usage_bytes)} / ${storageFormatter(data.media_storage_limit_bytes)} protégés`:'Connecté';
     }
     else if(data.media_storage_configured){storagePill.textContent=`${storageLabel} refusé`;storagePill.className='pill warn';storageText.textContent=data.media_storage_error||'Connexion impossible';storageText.className='cap-off';}
     else{storagePill.textContent=`${storageLabel} à configurer`;storagePill.className='pill warn';storageText.textContent='Variables de stockage manquantes';storageText.className='cap-off';}
