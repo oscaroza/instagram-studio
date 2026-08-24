@@ -78,16 +78,15 @@ class FakeContentIdeasResponse:
                 {
                     "title": f"Concept {index}",
                     "objective": "Partages",
-                    "concept": "Comparer deux façons de filmer la même scène.",
-                    "why_from_stats": "Hypothèse à tester sur un échantillon limité.",
+                    "why": "Hypothèse à tester sur un échantillon limité.",
                     "hook": "Tu préfères A ou B ?",
-                    "duration_seconds": 24,
-                    "shots": ["Filmer la version A", "Filmer la version B"],
-                    "on_screen_text": ["A ou B ?"],
+                    "protocol": [
+                        "0–2 s — Montrer A et B • Texte : Tu préfères lequel ?",
+                        "2–8 s — Filmer la version A",
+                        "8–14 s — Filmer la version B",
+                    ],
                     "cta": "Choisis A ou B en commentaire.",
-                    "caption_angle": "Expliquer les deux techniques.",
                     "success_metric": "Comparer le taux de commentaires.",
-                    "equipment": "iPhone 16 Pro",
                 }
                 for index in range(1, 4)
             ],
@@ -383,7 +382,7 @@ def test_growth_ideas_use_stats_and_brief_without_historical_text(monkeypatch):
 
     transmitted = json.dumps(FakeContentIdeasClient.last_payload, ensure_ascii=False)
     assert len(report["ideas"]) == 3
-    assert report["ideas"][0]["equipment"] == "iPhone 16 Pro"
+    assert report["ideas"][0]["shots"][0].startswith("0–2 s")
     assert "-15 abonnés net" in transmitted
     user_content = FakeContentIdeasClient.last_payload["messages"][1]["content"]
     assert '"views": 9000' in user_content
@@ -394,3 +393,13 @@ def test_growth_ideas_use_stats_and_brief_without_historical_text(monkeypatch):
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["strict"] is True
     assert response_format["json_schema"]["schema"]["additionalProperties"] is False
+    idea_properties = response_format["json_schema"]["schema"]["properties"]["ideas"]["items"]["properties"]
+    assert set(idea_properties) == {
+        "title",
+        "objective",
+        "why",
+        "hook",
+        "protocol",
+        "cta",
+        "success_metric",
+    }

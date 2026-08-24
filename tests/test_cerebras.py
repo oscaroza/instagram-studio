@@ -94,6 +94,25 @@ def test_completion_limit_error_is_short_and_does_not_trigger_a_retry():
     assert "sans nouvelle tentative" in str(error)
 
 
+def test_complete_failed_generation_can_be_recovered_without_retry():
+    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    generated = {"diagnosis": "Test prudent.", "ideas": [{"title": "A"}]}
+    response = httpx.Response(
+        400,
+        request=request,
+        content=json.dumps(
+            {
+                "error": {
+                    "code": "json_validate_failed",
+                    "failed_generation": json.dumps(generated),
+                }
+            }
+        ).encode(),
+    )
+
+    assert cerebras._failed_generation_json(response) == generated
+
+
 def test_caption_device_is_a_physical_constraint(monkeypatch):
     monkeypatch.setattr(
         cerebras,

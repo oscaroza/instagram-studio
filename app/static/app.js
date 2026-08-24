@@ -1136,16 +1136,17 @@ function renderContentIdeas(report,createdAt='',savedBrief=''){
     card.querySelector('.idea-number').textContent=`IDÉE ${index+1}`;
     card.querySelector('h3').textContent=idea.title||`Concept ${index+1}`;
     card.querySelector('.objective').textContent=idea.objective||'Test de croissance';
-    card.querySelector('.concept').textContent=idea.concept||'';
-    card.querySelector('.why').textContent=idea.why_from_stats?`Pourquoi la tester : ${idea.why_from_stats}`:'';
-    card.querySelector('.duration').textContent=`⏱ ${Number(idea.duration_seconds)||30} s`;
-    card.querySelector('.equipment').textContent=`🎥 ${idea.equipment||'Matériel à préciser'}`;
+    card.querySelector('.concept').textContent=idea.concept||'';if(!idea.concept)card.querySelector('.concept').classList.add('hidden');
+    card.querySelector('.why').textContent=idea.why_from_stats?`Pourquoi la tester : ${idea.why_from_stats}`:'';if(!idea.why_from_stats)card.querySelector('.why').classList.add('hidden');
+    const duration=Number(idea.duration_seconds)||0;card.querySelector('.duration').textContent=duration?`⏱ ${duration} s`:'';if(!duration)card.querySelector('.duration').classList.add('hidden');
+    const equipment=idea.equipment&&idea.equipment!=='Matériel indiqué dans le brief'?idea.equipment:'';card.querySelector('.equipment').textContent=equipment?`🎥 ${equipment}`:'';if(!equipment)card.querySelector('.equipment').classList.add('hidden');
+    if(!duration&&!equipment)card.querySelector('.idea-key-facts').classList.add('hidden');
     card.querySelector('.idea-hook strong').textContent=idea.hook||'Hook à préciser';
     for(const shot of idea.shots||[]){const item=document.createElement('li');item.textContent=shot;card.querySelector('.shots').appendChild(item);}
     for(const value of idea.on_screen_text||[]){const chip=document.createElement('span');chip.textContent=value;card.querySelector('.screen-texts').appendChild(chip);}
     if(!(idea.on_screen_text||[]).length)card.querySelector('.screen-text-section').classList.add('hidden');
     card.querySelector('.cta').textContent=idea.cta||'';
-    card.querySelector('.caption-angle').textContent=idea.caption_angle||'';
+    card.querySelector('.caption-angle').textContent=idea.caption_angle||'';if(!idea.caption_angle){card.querySelector('.caption-angle').closest('section').classList.add('hidden');card.querySelector('.idea-finish').classList.add('single');}
     card.querySelector('.success-metric p').textContent=idea.success_metric||'';
     root.appendChild(card);
   });

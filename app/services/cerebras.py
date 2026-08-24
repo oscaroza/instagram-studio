@@ -56,33 +56,23 @@ CONTENT_IDEAS_SCHEMA = {
                 "properties": {
                     "title": {"type": "string"},
                     "objective": {"type": "string"},
-                    "concept": {"type": "string"},
-                    "why_from_stats": {"type": "string"},
+                    "why": {"type": "string"},
                     "hook": {"type": "string"},
-                    "duration_seconds": {"type": "integer"},
-                    "shots": {"type": "array", "items": {"type": "string"}},
-                    "on_screen_text": {
+                    "protocol": {
                         "type": "array",
                         "items": {"type": "string"},
                     },
                     "cta": {"type": "string"},
-                    "caption_angle": {"type": "string"},
                     "success_metric": {"type": "string"},
-                    "equipment": {"type": "string"},
                 },
                 "required": [
                     "title",
                     "objective",
-                    "concept",
-                    "why_from_stats",
+                    "why",
                     "hook",
-                    "duration_seconds",
-                    "shots",
-                    "on_screen_text",
+                    "protocol",
                     "cta",
-                    "caption_angle",
                     "success_metric",
-                    "equipment",
                 ],
                 "additionalProperties": False,
             },
@@ -121,6 +111,11 @@ def _groq_error(response: httpx.Response) -> CerebrasError:
         return CerebrasError(
             "Groq n'a pas terminé le JSON avant la limite de sortie. "
             "La requête a été arrêtée sans nouvelle tentative automatique."
+        )
+    if code == "json_validate_failed":
+        return CerebrasError(
+            "Groq n’a pas réussi à terminer le JSON demandé. "
+            "Aucune seconde requête automatique n’a été envoyée."
         )
     detail = response.text.replace(settings.cerebras_api_key, "[secret redacted]")[:500]
     return CerebrasError(f"Erreur Groq {response.status_code}: {detail}")
@@ -178,6 +173,18 @@ def _extract_json(content: Any) -> dict[str, Any]:
                 return value
 
     raise CerebrasError("L'IA n'a pas renvoyé de JSON valide.")
+
+
+def _failed_generation_json(response: httpx.Response) -> dict[str, Any] | None:
+    """Recover a complete JSON document rejected only by Groq's strict schema."""
+    try:
+        error = (response.json() or {}).get("error") or {}
+        if str(error.get("code") or "") != "json_validate_failed":
+            return None
+        failed_generation = error.get("failed_generation")
+        return _extract_json(failed_generation)
+    except (ValueError, AttributeError, CerebrasError):
+        return None
 
 
 async def generate_caption(
@@ -378,13 +385,14 @@ async def generate_growth_content_ideas(
 But : donner une raison claire de s'abonner, commenter, partager ou enregistrer, sans mendier l'engagement et sans clickbait mensonger.
 
 Règles :
-- Chaque idée doit être précise et tournable : concept, hook des 2 premières secondes, durée, 4 à 7 plans ordonnés, textes à l'écran, CTA naturel, angle de caption, matériel et métrique principale à comparer.
+- Chaque idée doit être précise et tournable : hook des 2 premières secondes, CTA naturel et protocole de 5 étapes ordonnées. Chaque étape commence par une plage de temps, puis indique le plan, l'action et, si nécessaire, le texte à l'écran. Exemple : « 0–2 s — Gros plan sur la télécommande • Texte : Tu choisirais lequel ? ».
 - Varie les mécanismes : au moins une idée humaine/coulisses ou pédagogique, une idée interactive/comparative et une idée qui conserve la force visuelle du drone sans être seulement un beau montage.
 - N'utilise les conclusions statistiques que si les données les soutiennent. Sinon, présente l'idée comme un test.
 - Ne promets jamais qu'une idée deviendra virale et ne présente pas une corrélation comme une causalité.
 - Respecte strictement le matériel, les lieux, le temps et les contraintes du brief. Un iPhone seul ne produit pas une vue aérienne, sauf situation en hauteur explicitement indiquée.
 - Le CTA doit apporter une contrepartie au spectateur : choix à faire, suite annoncée, ressource, comparaison ou utilité à sauvegarder.
-- Reste concis pour éviter une réponse tronquée : une courte phrase par champ et par plan."""
+- Ne répète pas le diagnostic dans les idées et ne rédige pas de caption complète.
+- Reste très concis pour éviter une réponse tronquée : une courte phrase par champ et par étape."""
     user_prompt = (
         "Statistiques anonymisées :\n"
         + json.dumps(_compact_analytics_data(dashboard), ensure_ascii=False)
@@ -397,7 +405,7 @@ Règles :
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
-        "temperature": 0.45,
+        "temperature": 0.3,
         "max_completion_tokens": 4096,
         "response_format": _response_format(
             "instagram_growth_content_ideas", CONTENT_IDEAS_SCHEMA
@@ -415,43 +423,40 @@ Règles :
             headers=headers,
         )
     if response.status_code >= 400:
-        raise _groq_error(response)
-    try:
-        content = response.json()["choices"][0]["message"]["content"]
-    except (ValueError, KeyError, IndexError, TypeError) as exc:
-        raise CerebrasError("Réponse Groq inattendue.") from exc
+        result = _failed_generation_json(response)
+        if result is None:
+            raise _groq_error(response)
+    else:
+        try:
+            content = response.json()["choices"][0]["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise CerebrasError("Réponse Groq inattendue.") from exc
+        result = _extract_json(content)
 
-    result = _extract_json(content)
     result["diagnosis"] = str(result.get("diagnosis") or "")[:1200]
     normalized_ideas = []
     for raw_idea in (result.get("ideas") or [])[:3]:
         if not isinstance(raw_idea, dict):
             continue
         idea = {
-            key: str(raw_idea.get(key) or "")[:900]
-            for key in (
-                "title",
-                "objective",
-                "concept",
-                "why_from_stats",
-                "hook",
-                "cta",
-                "caption_angle",
-                "success_metric",
-                "equipment",
-            )
+            "title": str(raw_idea.get("title") or "")[:300],
+            "objective": str(raw_idea.get("objective") or "")[:200],
+            "why_from_stats": str(
+                raw_idea.get("why") or raw_idea.get("why_from_stats") or ""
+            )[:700],
+            "hook": str(raw_idea.get("hook") or "")[:400],
+            "cta": str(raw_idea.get("cta") or "")[:500],
+            "success_metric": str(raw_idea.get("success_metric") or "")[:500],
+            "concept": "",
+            "caption_angle": "",
+            "equipment": "Matériel indiqué dans le brief",
+            "duration_seconds": 0,
+            "on_screen_text": [],
         }
-        try:
-            idea["duration_seconds"] = max(
-                1, min(int(raw_idea.get("duration_seconds") or 0), 600)
-            )
-        except (TypeError, ValueError):
-            idea["duration_seconds"] = 30
-        for key in ("shots", "on_screen_text"):
-            values = raw_idea.get(key) or []
-            if not isinstance(values, list):
-                values = [values]
-            idea[key] = [str(value)[:500] for value in values[:7]]
+        protocol = raw_idea.get("protocol") or raw_idea.get("shots") or []
+        if not isinstance(protocol, list):
+            protocol = [protocol]
+        idea["shots"] = [str(value)[:500] for value in protocol[:7]]
         normalized_ideas.append(idea)
     if not normalized_ideas:
         raise CerebrasError("Groq n’a renvoyé aucune idée exploitable.")
