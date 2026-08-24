@@ -49,8 +49,9 @@ from app.services.instagram import (
     publish_reel,
 )
 from app.routes.v2 import publication_media_items, router as v2_router
-from app.services.cloudinary_media import (
-    cloudinary_configured,
+from app.services.media_storage import (
+    media_storage_configured,
+    storage_provider_label,
 )
 from app.services.database import (
     database,
@@ -463,7 +464,8 @@ async def home(
             "v2_modules": V2_MODULES,
             "trial_reels_enabled": settings.enable_trial_reels,
             "mongodb_ready": database_configured(),
-            "cloudinary_ready": cloudinary_configured(),
+            "media_storage_ready": media_storage_configured(),
+            "media_storage_label": storage_provider_label(),
             "appearance": appearance,
         },
     )
@@ -482,7 +484,7 @@ async def health():
 
         "mongodb_configured": database_configured(),
 
-        "cloudinary_configured": cloudinary_configured(),
+        "media_storage_configured": media_storage_configured(),
 
         "cerebras_configured": bool(
             settings.cerebras_api_key

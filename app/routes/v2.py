@@ -20,17 +20,6 @@ from app.services.cerebras import (
     analyze_instagram_performance,
     chat_instagram_performance,
 )
-from app.services.cloudinary_media import (
-    CloudinaryMediaError,
-    cloudinary_configured,
-    delete_media,
-    muted_video_url,
-    upload_image,
-    upload_image_url,
-    upload_video,
-    upload_video_url,
-    verify_cloudinary_connection,
-)
 from app.services.database import (
     DatabaseUnavailable,
     database,
@@ -58,6 +47,18 @@ from app.services.local_media import (
     LocalMediaError,
     local_media_path,
     mute_local_video,
+)
+from app.services.media_storage import (
+    MediaStorageError,
+    active_storage_provider,
+    delete_stored_media,
+    media_storage_configured,
+    prepare_muted_media,
+    storage_provider_label,
+    store_media_path,
+    store_media_url,
+    stored_media_provider,
+    verify_active_storage,
 )
 from app.services.login_security import (
     list_login_security,
@@ -174,22 +175,30 @@ async def v2_status():
             )
         except Exception:
             mongo_ready = False
-    cloudinary_ready = False
-    cloudinary_error = ""
-    if cloudinary_configured():
+    storage_ready = False
+    storage_error = ""
+    storage_usage_bytes = 0
+    storage_limit_bytes = 0
+    if media_storage_configured():
         try:
-            cloudinary_ready = await asyncio.to_thread(
-                verify_cloudinary_connection
-            )
-        except CloudinaryMediaError as exc:
-            cloudinary_error = str(exc)
+            storage_status = await asyncio.to_thread(verify_active_storage)
+            storage_ready = bool(storage_status.get("ready"))
+            storage_usage_bytes = int(storage_status.get("usage_bytes", 0))
+            storage_limit_bytes = int(storage_status.get("limit_bytes", 0))
+        except MediaStorageError as exc:
+            storage_error = str(exc)
+    provider = active_storage_provider()
     return {
         "ok": True,
         "mongodb_configured": database_configured(),
         "mongodb_ready": mongo_ready,
-        "cloudinary_configured": cloudinary_configured(),
-        "cloudinary_ready": cloudinary_ready,
-        "cloudinary_error": cloudinary_error,
+        "media_storage_provider": provider,
+        "media_storage_label": storage_provider_label(provider),
+        "media_storage_configured": media_storage_configured(),
+        "media_storage_ready": storage_ready,
+        "media_storage_error": storage_error,
+        "media_storage_usage_bytes": storage_usage_bytes,
+        "media_storage_limit_bytes": storage_limit_bytes,
         "push_ready": push_configured(),
         "trial_reels_enabled": settings.enable_trial_reels,
     }
@@ -572,7 +581,10 @@ async def list_library():
 
     def query():
         documents = list(database().media.find({}).sort("created_at", -1).limit(200))
-        total_bytes = sum(int(item.get("bytes", 0)) for item in documents)
+        total_bytes = sum(
+            int(item.get("bytes", 0)) + int(item.get("muted_bytes", 0))
+            for item in documents
+        )
         media_ids = [str(item["_id"]) for item in documents]
         usage: dict[str, dict[str, Any]] = {
             media_id: {"usage_count": 0, "active_usage_count": 0, "last_used_at": None}
@@ -619,10 +631,18 @@ async def list_library():
                         usage[media_id]["last_used_at"] = used_at
         for item in documents:
             item.update(usage[str(item["_id"])])
-        return documents, total_bytes
+        providers: dict[str, dict[str, int]] = {}
+        for item in documents:
+            provider = stored_media_provider(item)
+            summary = providers.setdefault(provider, {"count": 0, "bytes": 0})
+            summary["count"] += 1
+            summary["bytes"] += int(item.get("bytes", 0)) + int(
+                item.get("muted_bytes", 0)
+            )
+        return documents, total_bytes, providers
 
     try:
-        documents, total_bytes = await asyncio.to_thread(query)
+        documents, total_bytes, providers = await asyncio.to_thread(query)
     except Exception:
         return api_error("Bibliothèque MongoDB indisponible.", 503)
 
@@ -630,13 +650,14 @@ async def list_library():
         "ok": True,
         "items": [serialize_document(item) for item in documents],
         "total_bytes": total_bytes,
+        "providers": providers,
     }
 
 
 @router.post("/library/promote")
 async def promote_media_to_library(payload: dict):
-    if not database_configured() or not cloudinary_configured():
-        return api_error("MongoDB ou Cloudinary n’est pas configuré.", 503)
+    if not database_configured() or not media_storage_configured():
+        return api_error("MongoDB ou le stockage média n’est pas configuré.", 503)
 
     media_type = str(payload.get("media_type", "video")).strip().lower()
     if media_type not in {"image", "video"}:
@@ -650,60 +671,61 @@ async def promote_media_to_library(payload: dict):
     if not media_url.startswith(("https://", "http://")):
         return api_error("Une URL publique est nécessaire.")
 
-    cloud_media = None
+    stored_media = None
+    document = None
     try:
         source_path = local_media_path(media_url)
         if source_path is not None:
-            upload_function = upload_image if media_type == "image" else upload_video
-            cloud_media = await asyncio.to_thread(
-                upload_function, source_path, source_path.name
+            stored_media = await asyncio.to_thread(
+                store_media_path,
+                source_path,
+                source_path.name,
+                media_type,
+                bool(payload.get("mute_audio")),
             )
         else:
-            upload_function = (
-                upload_image_url if media_type == "image" else upload_video_url
+            stored_media = await asyncio.to_thread(
+                store_media_url,
+                media_url,
+                media_type,
+                bool(payload.get("mute_audio")),
             )
-            cloud_media = await asyncio.to_thread(upload_function, media_url)
 
         document = {
-            "cloudinary_public_id": cloud_media["public_id"],
-            "secure_url": cloud_media["secure_url"],
-            "thumbnail_url": cloud_media["thumbnail_url"],
-            "bytes": cloud_media["bytes"],
-            "duration": cloud_media["duration"],
-            "format": cloud_media["format"],
-            "width": cloud_media["width"],
-            "height": cloud_media["height"],
-            "original_filename": cloud_media["original_filename"],
+            "storage_provider": stored_media["storage_provider"],
+            "storage_key": stored_media["storage_key"],
+            "secure_url": stored_media["secure_url"],
+            "thumbnail_url": stored_media["thumbnail_url"],
+            "bytes": stored_media["bytes"],
+            "duration": stored_media["duration"],
+            "format": stored_media["format"],
+            "width": stored_media["width"],
+            "height": stored_media["height"],
+            "original_filename": stored_media["original_filename"],
             "description": str(payload.get("description", "")).strip()[:500],
-            "media_type": cloud_media["media_type"],
-            "resource_type": cloud_media["resource_type"],
+            "media_type": stored_media["media_type"],
+            "resource_type": stored_media["resource_type"],
+            "muted": bool(stored_media.get("muted")),
             "created_at": utc_now(),
         }
+        if stored_media.get("public_id"):
+            document["cloudinary_public_id"] = stored_media["public_id"]
         result = await asyncio.to_thread(database().media.insert_one, document)
         document["_id"] = result.inserted_id
-    except CloudinaryMediaError as exc:
+    except MediaStorageError as exc:
         return api_error(str(exc), 502)
     except Exception:
-        if cloud_media and cloud_media.get("public_id"):
+        cleanup_media = document or stored_media
+        if cleanup_media:
             try:
-                await asyncio.to_thread(
-                    delete_media,
-                    cloud_media["public_id"],
-                    cloud_media.get("resource_type", media_type),
-                )
+                await asyncio.to_thread(delete_stored_media, cleanup_media)
             except Exception:
                 pass
         return api_error("Impossible d’enregistrer le média programmé.", 503)
 
-    publication_url = cloud_media["secure_url"]
-    if media_type == "video" and bool(payload.get("mute_audio")):
-        publication_url = muted_video_url(
-            cloud_media["public_id"],
-            cloud_media["format"],
-        )
     return {
         "ok": True,
-        "url": publication_url,
+        "url": stored_media["publication_url"],
         "media": serialize_document(document),
     }
 
@@ -713,21 +735,27 @@ async def mute_media(payload: dict):
     video_url = str(payload.get("video_url", "")).strip()
     library_id = str(payload.get("library_id", "")).strip()
 
-    if library_id and database_configured() and cloudinary_configured():
+    if library_id and database_configured():
         try:
             media = await asyncio.to_thread(
                 database().media.find_one,
                 {"_id": object_id(library_id)},
             )
             if media:
+                prepared = await asyncio.to_thread(prepare_muted_media, media)
+                if prepared["updates"]:
+                    await asyncio.to_thread(
+                        database().media.update_one,
+                        {"_id": media["_id"]},
+                        {"$set": prepared["updates"]},
+                    )
                 return {
                     "ok": True,
-                    "url": muted_video_url(
-                        media["cloudinary_public_id"],
-                        media.get("format", "mp4"),
-                    ),
-                    "storage": "cloudinary",
+                    "url": prepared["url"],
+                    "storage": stored_media_provider(media),
                 }
+        except MediaStorageError as exc:
+            return api_error(str(exc), 502)
         except Exception:
             return api_error("Bibliothèque MongoDB indisponible.", 503)
 
@@ -740,8 +768,8 @@ async def mute_media(payload: dict):
 
 @router.delete("/library/{media_id}")
 async def remove_library_media(media_id: str):
-    if not database_configured() or not cloudinary_configured():
-        return api_error("MongoDB ou Cloudinary n’est pas configuré.", 503)
+    if not database_configured():
+        return api_error("MongoDB n’est pas configuré.", 503)
     try:
         identifier = object_id(media_id)
     except ValueError as exc:
@@ -770,13 +798,9 @@ async def remove_library_media(media_id: str):
         )
 
     try:
-        await asyncio.to_thread(
-            delete_media,
-            media["cloudinary_public_id"],
-            media.get("resource_type", media.get("media_type", "video")),
-        )
+        await asyncio.to_thread(delete_stored_media, media)
         await asyncio.to_thread(database().media.delete_one, {"_id": identifier})
-    except CloudinaryMediaError as exc:
+    except MediaStorageError as exc:
         return api_error(str(exc), 502)
     return {"ok": True}
 
@@ -837,17 +861,24 @@ async def create_publication(payload: dict):
             409,
         )
 
-    if mute_audio and library_id and cloudinary_configured():
+    if mute_audio and library_id:
         try:
             media = await asyncio.to_thread(
                 database().media.find_one,
                 {"_id": object_id(library_id)},
             )
             if media:
-                media_items[0]["url"] = muted_video_url(
-                    media["cloudinary_public_id"],
-                    media.get("format", "mp4"),
-                )
+                prepared = await asyncio.to_thread(prepare_muted_media, media)
+                media_items[0]["url"] = prepared["url"]
+                if prepared["updates"]:
+                    await asyncio.to_thread(
+                        database().media.update_one,
+                        {"_id": media["_id"]},
+                        {"$set": prepared["updates"]},
+                    )
+        except MediaStorageError as exc:
+            await asyncio.to_thread(release_publication_claim, dedupe_key)
+            return api_error(str(exc), 502)
         except Exception:
             await asyncio.to_thread(release_publication_claim, dedupe_key)
             return api_error("Impossible de préparer la version sans son.", 503)
@@ -857,7 +888,7 @@ async def create_publication(payload: dict):
         if len(library_ids) != len(media_items):
             await asyncio.to_thread(release_publication_claim, dedupe_key)
             return api_error(
-                "Chaque média programmé doit d’abord être enregistré dans Cloudinary."
+                "Chaque média programmé doit d’abord être enregistré dans le stockage durable."
             )
         try:
             scheduled_for = parse_datetime(scheduled_value)

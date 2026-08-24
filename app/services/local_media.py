@@ -39,6 +39,17 @@ def mute_local_video(video_url: str) -> dict[str, str]:
             "Pour couper le son sans Cloudinary, importe d’abord la vidéo dans le Studio."
         )
 
+    target = mute_video_path(source)
+    return {
+        "url": f"{settings.app_base_url}/media/{target.name}",
+        "filename": target.name,
+    }
+
+
+def mute_video_path(source: Path) -> Path:
+    if not source.is_file() or source.stat().st_size <= 0:
+        raise LocalMediaError("La vidéo à rendre muette est introuvable.")
+
     target_name = f"{uuid.uuid4().hex}-muted.mp4"
     target = UPLOAD_DIR / target_name
     command = [
@@ -64,7 +75,7 @@ def mute_local_video(video_url: str) -> dict[str, str]:
             command,
             check=True,
             capture_output=True,
-            timeout=120,
+            timeout=300,
         )
     except (OSError, subprocess.SubprocessError) as exc:
         target.unlink(missing_ok=True)
@@ -73,7 +84,4 @@ def mute_local_video(video_url: str) -> dict[str, str]:
     if not target.is_file() or target.stat().st_size == 0:
         target.unlink(missing_ok=True)
         raise LocalMediaError("La version sans son est invalide.")
-    return {
-        "url": f"{settings.app_base_url}/media/{target_name}",
-        "filename": target_name,
-    }
+    return target

@@ -51,7 +51,7 @@ def publishing_capabilities() -> tuple[Capability, ...]:
 
 V2_MODULES = (
     ("calendar", "Calendrier", "Actif avec programmation côté serveur"),
-    ("library", "Bibliothèque", "Active avec Cloudinary et MongoDB"),
+    ("library", "Bibliothèque", "Active avec Cloudflare R2, Cloudinary historique et MongoDB"),
     ("drafts", "Brouillons", "V1 locale conservée, persistance serveur à venir"),
     ("notifications", "Notifications", "Web Push PWA avec préférences"),
 )

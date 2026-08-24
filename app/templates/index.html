@@ -27,7 +27,7 @@
       <span class="pill {{ 'ok' if cerebras_ready else 'warn' }}">Groq {{ '✓' if cerebras_ready else 'à configurer' }}</span>
       <span class="pill {{ 'ok' if instagram_ready else 'warn' }}">Instagram {{ '✓' if instagram_ready else 'à configurer' }}</span>
       <span id="mongoStatusPill" class="pill {{ 'ok' if mongodb_ready else 'warn' }}">MongoDB {{ 'vérification…' if mongodb_ready else 'à configurer' }}</span>
-      <span id="cloudinaryStatusPill" class="pill {{ 'ok' if cloudinary_ready else 'warn' }}">Cloudinary {{ 'vérification…' if cloudinary_ready else 'à configurer' }}</span>
+      <span id="mediaStorageStatusPill" class="pill {{ 'ok' if media_storage_ready else 'warn' }}">{{ media_storage_label }} {{ 'vérification…' if media_storage_ready else 'à configurer' }}</span>
     </div>
   </header>
 
@@ -47,7 +47,7 @@
       <div class="grid two">
         <div class="card">
           <h2>1. Média</h2>
-          <p class="muted">L’import reste temporaire pour une publication immédiate. Il passe dans Cloudinary seulement si tu le programmes.</p>
+          <p class="muted">L’import reste temporaire pour une publication immédiate. Il passe dans Cloudflare R2 seulement si tu le programmes.</p>
           <label>Type de publication
             <select id="mediaKind">
               <option value="reel">Reel</option>
@@ -304,7 +304,7 @@
 
     <section id="library" class="panel">
       <div class="card">
-        <div class="row-between"><div><h2>Bibliothèque Cloudinary</h2><p class="muted">Les métadonnées sont conservées dans MongoDB.</p></div><button id="refreshLibrary" class="ghost" type="button">Actualiser</button></div>
+        <div class="row-between"><div><h2>Bibliothèque médias</h2><p class="muted">Les nouveaux médias programmés utilisent Cloudflare R2 ; les anciens médias Cloudinary restent compatibles.</p></div><button id="refreshLibrary" class="ghost" type="button">Actualiser</button></div>
         <p id="libraryUsage" class="muted small">Chargement…</p>
         <div class="library-filters">
           <label class="library-search">Rechercher
@@ -434,7 +434,7 @@
           <div><span>Instagram direct</span><strong>{{ 'Configuré' if instagram_ready else 'Token + User ID manquants' }}</strong></div>
           <div><span>OAuth Instagram</span><strong>{{ 'Prêt' if oauth_ready else 'App Meta à configurer' }}</strong></div>
           <div><span>MongoDB</span><strong id="mongoStatusText">{{ 'Vérification de la connexion…' if mongodb_ready else 'MONGODB_URI manquante' }}</strong></div>
-          <div><span>Cloudinary</span><strong id="cloudinaryStatusText">{{ 'Vérification de la connexion…' if cloudinary_ready else 'Variables Cloudinary manquantes' }}</strong></div>
+          <div><span>Stockage média</span><strong id="mediaStorageStatusText">{{ media_storage_label }} — {{ 'vérification de la connexion…' if media_storage_ready else 'variables manquantes' }}</strong></div>
           <div><span>Publications API • 24 h</span><strong id="publishingLimit">Chargement…</strong></div>
           <div><span>Token Instagram</span><strong id="instagramTokenHealth">Chargement…</strong></div>
         </div>
@@ -498,6 +498,6 @@
   </main>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=22"></script>
+  <script src="/static/app.js?v=23"></script>
 </body>
 </html>

@@ -9,6 +9,7 @@ pymongo>=4.10,<5
 dnspython>=2.6,<3
 certifi>=2025.1
 cloudinary>=1.41,<2
+boto3>=1.35,<2
 cryptography>=49,<51
 pywebpush>=2,<3
 webauthn>=3,<4

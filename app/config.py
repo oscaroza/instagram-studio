@@ -164,6 +164,21 @@ class Settings:
         "instagram-studio",
     ).strip("/")
 
+    media_storage_backend: str = os.getenv(
+        "MEDIA_STORAGE_BACKEND",
+        "auto",
+    ).strip().lower()
+    r2_account_id: str = os.getenv("R2_ACCOUNT_ID", "").strip()
+    r2_access_key_id: str = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+    r2_secret_access_key: str = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+    r2_bucket_name: str = os.getenv("R2_BUCKET_NAME", "").strip()
+    r2_public_base_url: str = os.getenv("R2_PUBLIC_BASE_URL", "").rstrip("/")
+    r2_folder: str = os.getenv("R2_FOLDER", "instagram-studio").strip("/")
+    r2_max_storage_gb: float = min(
+        9.0,
+        max(0.5, float(os.getenv("R2_MAX_STORAGE_GB", "9"))),
+    )
+
     # ------------------------------------------------------------
     # PWA Web Push
     # ------------------------------------------------------------

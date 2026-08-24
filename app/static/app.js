@@ -505,7 +505,7 @@ $('publishBtn').addEventListener('click',async()=>{
       for(let index=0;index<payload.media_items.length;index++){
         const item=durableItems[index];
         if(item.library_id)continue;
-        setNotice('actionMessage',`Copie durable vers Cloudinary (${index+1}/${payload.media_items.length})…`);
+        setNotice('actionMessage',`Copie durable vers le stockage média (${index+1}/${payload.media_items.length})…`);
         const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:item.url,media_type:item.media_type,mute_audio:payload.mute_audio,description:payload.title})});
         durableItems[index]={...item,url:promoted.url,library_id:promoted.media.id,thumbnail_url:promoted.media.thumbnail_url||item.thumbnail_url};
         payload.media_items=durableItems;selectedMediaItems=durableItems.map(mediaItem=>({...mediaItem}));syncMediaFields();renderSelectedMedia();
@@ -642,18 +642,22 @@ $('registerPasskeyBtn').addEventListener('click',async()=>{
 });
 
 async function loadV2Status(){
-  const pill=$('mongoStatusPill'),text=$('mongoStatusText'),cloudPill=$('cloudinaryStatusPill'),cloudText=$('cloudinaryStatusText');
+  const pill=$('mongoStatusPill'),text=$('mongoStatusText'),storagePill=$('mediaStorageStatusPill'),storageText=$('mediaStorageStatusText');
   try{
     const data=await api('/api/v2/status');
     if(data.mongodb_ready){pill.textContent='MongoDB ✓';pill.className='pill ok';text.textContent='Connecté';text.className='cap-on';}
     else if(data.mongodb_configured){pill.textContent='MongoDB connexion impossible';pill.className='pill warn';text.textContent='Connexion Atlas impossible';text.className='cap-off';}
     else{pill.textContent='MongoDB à configurer';pill.className='pill warn';text.textContent='MONGODB_URI manquante';text.className='cap-off';}
-    if(data.cloudinary_ready){cloudPill.textContent='Cloudinary ✓';cloudPill.className='pill ok';cloudText.textContent='Connecté';cloudText.className='cap-on';}
-    else if(data.cloudinary_configured){cloudPill.textContent='Cloudinary connexion refusée';cloudPill.className='pill warn';cloudText.textContent=data.cloudinary_error||'Connexion impossible';cloudText.className='cap-off';}
-    else{cloudPill.textContent='Cloudinary à configurer';cloudPill.className='pill warn';cloudText.textContent='Variables Cloudinary manquantes';cloudText.className='cap-off';}
+    const storageLabel=data.media_storage_label||'Stockage média';
+    if(data.media_storage_ready){
+      storagePill.textContent=`${storageLabel} ✓`;storagePill.className='pill ok';storageText.className='cap-on';
+      storageText.textContent=data.media_storage_limit_bytes?`Connecté • ${formatBytes(data.media_storage_usage_bytes)} / ${formatBytes(data.media_storage_limit_bytes)} protégés`:'Connecté';
+    }
+    else if(data.media_storage_configured){storagePill.textContent=`${storageLabel} refusé`;storagePill.className='pill warn';storageText.textContent=data.media_storage_error||'Connexion impossible';storageText.className='cap-off';}
+    else{storagePill.textContent=`${storageLabel} à configurer`;storagePill.className='pill warn';storageText.textContent='Variables de stockage manquantes';storageText.className='cap-off';}
   }catch(err){
     pill.textContent='MongoDB indisponible';pill.className='pill warn';text.textContent=err.message;text.className='cap-off';
-    cloudPill.textContent='Cloudinary indisponible';cloudPill.className='pill warn';cloudText.textContent=err.message;cloudText.className='cap-off';
+    storagePill.textContent='Stockage indisponible';storagePill.className='pill warn';storageText.textContent=err.message;storageText.className='cap-off';
   }
 }
 
@@ -661,7 +665,8 @@ async function loadLibrary(){
   const root=$('libraryGrid');root.innerHTML='<p class="muted">Chargement…</p>';hideNotice('libraryNotice');
   try{
     const data=await api('/api/library');libraryItems=data.items||[];
-    $('libraryUsage').textContent=`${libraryItems.length} média(s) • ${formatBytes(data.total_bytes)} gérés par le Studio dans Cloudinary`;
+    const providers=Object.entries(data.providers||{}).map(([provider,value])=>`${value.count} sur ${provider==='r2'?'R2':'Cloudinary'}`).join(' • ');
+    $('libraryUsage').textContent=`${libraryItems.length} média(s) • ${formatBytes(data.total_bytes)}${providers?` • ${providers}`:''}`;
     renderLibrary();
   }catch(err){root.innerHTML='';setNotice('libraryNotice',err.message,'error');}
 }
@@ -701,7 +706,8 @@ function renderLibrary(){
       card.querySelector('strong').textContent=item.original_filename||(itemType==='image'?'Photo':'Vidéo');
       const created=item.created_at?new Date(item.created_at).toLocaleDateString('fr-FR'):'Date inconnue';
       card.querySelector('.description').textContent=item.description||'Sans description';
-      card.querySelector('.meta').textContent=itemType==='image'?`${formatBytes(item.bytes)} • ${item.width||'?'} × ${item.height||'?'} • ${created}`:`${formatBytes(item.bytes)} • ${Math.round(item.duration||0)} s • ${created}`;
+      const provider=(item.storage_provider||'cloudinary')==='r2'?'R2':'Cloudinary';
+      card.querySelector('.meta').textContent=itemType==='image'?`${formatBytes(item.bytes)} • ${item.width||'?'} × ${item.height||'?'} • ${provider} • ${created}`:`${formatBytes(item.bytes)} • ${Math.round(item.duration||0)} s • ${provider} • ${created}`;
       const uses=Number(item.usage_count||0),active=Number(item.active_usage_count||0);
       card.querySelector('.usage').textContent=active?`Utilisé dans ${active} programmation(s) active(s)`:uses?`Utilisé ${uses} fois`:'Jamais utilisé';
       card.querySelector('.use').onclick=()=>{

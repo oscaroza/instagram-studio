@@ -16,7 +16,7 @@ services:
       - key: STUDIO_SESSION_HOURS
         value: 24
       - key: STUDIO_IDLE_MINUTES
-        value: 5
+        value: 10
       - key: STUDIO_COOKIE_SECURE
         value: true
       - key: CEREBRAS_MODEL
@@ -43,6 +43,22 @@ services:
         sync: false
       - key: CLOUDINARY_FOLDER
         value: instagram-studio
+      - key: MEDIA_STORAGE_BACKEND
+        value: auto
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_PUBLIC_BASE_URL
+        sync: false
+      - key: R2_FOLDER
+        value: instagram-studio
+      - key: R2_MAX_STORAGE_GB
+        value: 9
       - key: VAPID_PUBLIC_KEY
         sync: false
       - key: VAPID_PRIVATE_KEY

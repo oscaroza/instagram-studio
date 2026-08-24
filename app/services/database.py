@@ -51,6 +51,7 @@ def ping_database() -> bool:
 def ensure_indexes() -> None:
     db = database()
     db.media.create_index([("created_at", ASCENDING)])
+    db.media.create_index([("storage_provider", ASCENDING), ("storage_key", ASCENDING)])
     db.publications.create_index([("status", ASCENDING), ("scheduled_for", ASCENDING)])
     db.publications.create_index([("library_id", ASCENDING)])
     db.publications.create_index([("library_ids", ASCENDING)])
