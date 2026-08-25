@@ -757,32 +757,46 @@ async function loadR2Usage(){
   const button=$('refreshR2UsageBtn');button.disabled=true;button.textContent='Actualisation…';hideNotice('r2UsageNotice');
   try{
     const data=await api('/api/r2/usage'),usage=data.usage||{};
-    const alerts=[];
+    const warnings=[],critical=[];
     const accountStorage=usage.account_storage_bytes;
     const displayedStorage=accountStorage===null||accountStorage===undefined?usage.bucket_storage_bytes:accountStorage;
     const storageRemaining=renderR2Quota('r2Storage',displayedStorage,usage.free_storage_bytes||10000000000,formatR2Storage);
     $('r2StorageRemaining').textContent=`${formatR2Storage(storageRemaining)} avant 10 Go • uploads bloqués à ${formatR2Storage(usage.studio_storage_limit_bytes||9000000000)}`;
-    if(Number(displayedStorage)/(Number(usage.free_storage_bytes)||10000000000)>=.8)alerts.push('Le stockage R2 dépasse 80 % du quota gratuit.');
+    const storagePercent=Number(displayedStorage)/(Number(usage.free_storage_bytes)||10000000000)*100;
+    if(storagePercent>=90)critical.push('Le stockage R2 dépasse 90 % du quota gratuit.');
+    else if(storagePercent>=80)warnings.push('Le stockage R2 dépasse 80 % du quota gratuit.');
     if(usage.billing_ready||usage.analytics_ready&&usage.billing_period_ready){
       const remainingA=renderR2Quota('r2ClassA',usage.class_a?.used,usage.class_a?.limit||1000000,formatStat);
       const remainingB=renderR2Quota('r2ClassB',usage.class_b?.used,usage.class_b?.limit||10000000,formatStat);
       const sourceSuffix=usage.billing_authoritative?'facturation Cloudflare':'Analytics aligné au cycle';
       $('r2ClassARemaining').textContent=`${formatStat(remainingA)} restantes • ${sourceSuffix}`;
       $('r2ClassBRemaining').textContent=`${formatStat(remainingB)} restantes • ${sourceSuffix}`;
-      if(Number(usage.class_a?.percent)>=80)alerts.push('Les opérations de classe A dépassent 80 % du quota gratuit.');
-      if(Number(usage.class_b?.percent)>=80)alerts.push('Les opérations de classe B dépassent 80 % du quota gratuit.');
+      const classAPercent=Number(usage.class_a?.percent)||0,classBPercent=Number(usage.class_b?.percent)||0;
+      if(classAPercent>=90)critical.push('Les opérations de classe A dépassent 90 % du quota gratuit.');
+      else if(classAPercent>=80)warnings.push('Les opérations de classe A dépassent 80 % du quota gratuit.');
+      if(classBPercent>=90)critical.push('Les opérations de classe B dépassent 90 % du quota gratuit.');
+      else if(classBPercent>=80)warnings.push('Les opérations de classe B dépassent 80 % du quota gratuit.');
       const unknown=Number(usage.unknown_operations)||0;
-      if(unknown)alerts.push(`${formatStat(unknown)} opération(s) Cloudflare n’ont pas pu être classées automatiquement.`);
-      if(!usage.billing_authoritative)alerts.push('La période est celle de la facturation, mais les opérations viennent d’Analytics : le dashboard Billing Cloudflare reste la référence avant tout paiement.');
+      if(unknown){
+        const details=(usage.unknown_operation_types||[]).map(item=>`${item.action} (${formatStat(item.requests)})`).join(', ');
+        warnings.push(`${formatStat(unknown)} opération(s) non classée(s)${details?` : ${details}`:''}. Elles ne sont ajoutées ni à A ni à B tant que Cloudflare ne documente pas leur catégorie.`);
+      }
+      if(!usage.billing_authoritative){
+        warnings.push('Les compteurs A/B viennent d’Analytics sur le cycle de facturation. Le dashboard Cloudflare Billing reste la valeur de référence pour la facture.');
+        if(usage.billing_error)warnings.push(`API Billing : ${usage.billing_error}`);
+      }
     }else{
       renderR2Quota('r2ClassA',0,1000000,formatStat);renderR2Quota('r2ClassB',0,10000000,formatStat);
       $('r2ClassAValue').textContent='Facturation non vérifiée';$('r2ClassBValue').textContent='Facturation non vérifiée';
       $('r2ClassARemaining').textContent='Ajoute CLOUDFLARE_BILLING_API_TOKEN';$('r2ClassBRemaining').textContent='Permission Account Billing — Read';
       setNotice('r2UsageNotice',usage.billing_error||usage.analytics_error||'Le Studio refuse d’afficher une estimation comme une valeur facturable. Ajoute le token Billing Cloudflare.','error');
     }
-    if(usage.bucket_storage_error)alerts.push(usage.bucket_storage_error);
-    if(usage.analytics_error)alerts.push(usage.analytics_error);
-    if((usage.billing_ready||usage.analytics_ready)&&alerts.length)setNotice('r2UsageNotice',`${alerts.join('\n')} Vérifie le dashboard Cloudflare avant d’approcher les limites.`,'error');
+    if(usage.bucket_storage_error)critical.push(usage.bucket_storage_error);
+    if(usage.analytics_error)critical.push(usage.analytics_error);
+    if((usage.billing_ready||usage.analytics_ready)&&(critical.length||warnings.length)){
+      const messages=[...critical,...warnings];
+      setNotice('r2UsageNotice',messages.join('\n'),critical.length?'error':'warning');
+    }
     const start=usage.period_start?statsDate(usage.period_start):'inconnue',end=usage.period_end?statsDate(usage.period_end):'inconnue';
     const source=usage.billing_authoritative?'API Billing Cloudflare (valeurs de facturation)':usage.billing_period_ready?'Analytics R2 sur la période de facturation':'source de facturation indisponible';
     const cost=usage.billed_cost===null||usage.billed_cost===undefined?'':` • coût facturé relevé : ${Number(usage.billed_cost).toLocaleString('fr-FR',{style:'currency',currency:usage.billing_currency||'USD'})}`;

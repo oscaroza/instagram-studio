@@ -41,6 +41,13 @@ CLASS_B_ACTIONS = {
     "getbucketlifecycleconfiguration",
 }
 FREE_ACTIONS = {"deleteobject", "deletebucket", "abortmultipartupload"}
+ACTION_ALIASES = {
+    # Cloudflare Analytics can expose the S3 API name while the pricing table
+    # uses the canonical R2 billing name.
+    "listobjectsv1": "listobjects",
+    "createbucket": "putbucket",
+    "deleteobjects": "deleteobject",
+}
 
 R2_ANALYTICS_QUERY = """
 query R2Usage(
@@ -96,6 +103,7 @@ def _safe_cloudflare_message(message: str) -> str:
 
 def _operation_class(action: str) -> str:
     normalized = re.sub(r"[^a-z0-9]", "", action.lower())
+    normalized = ACTION_ALIASES.get(normalized, normalized)
     if normalized in CLASS_A_ACTIONS:
         return "class_a"
     if normalized in CLASS_B_ACTIONS:
@@ -188,6 +196,12 @@ def _query_billable_usage(
         )
     except httpx.HTTPError as exc:
         raise RuntimeError("Connexion à l’API Billing Cloudflare impossible.") from exc
+    if response.status_code in {401, 403}:
+        raise RuntimeError(
+            "Cloudflare refuse l’API Billable Usage, encore en accès alpha restreint. "
+            "Vérifie Billing — Read ; si cette permission est déjà active, ce compte "
+            "n’est probablement pas encore autorisé à utiliser cet endpoint."
+        )
     payload = _cloudflare_json(response, "Billing")
     records = [item for item in payload.get("result") or [] if isinstance(item, dict)]
     r2_records = [
@@ -383,6 +397,7 @@ def r2_usage_summary(
         "class_b": _quota(0, R2_CLASS_B_FREE_REQUESTS),
         "free_operations": 0,
         "unknown_operations": 0,
+        "unknown_operation_types": [],
     }
     if r2_configured():
         try:
@@ -461,12 +476,19 @@ def r2_usage_summary(
             client.close()
 
     operation_totals = {"class_a": 0, "class_b": 0, "free": 0, "unknown": 0}
+    unknown_action_totals: dict[str, int] = {}
     for group in account.get("operations") or []:
         if not isinstance(group, dict):
             continue
         action = str((group.get("dimensions") or {}).get("actionType") or "")
         requests = _integer((group.get("sum") or {}).get("requests"))
-        operation_totals[_operation_class(action)] += requests
+        operation_class = _operation_class(action)
+        operation_totals[operation_class] += requests
+        if operation_class == "unknown" and requests:
+            safe_action = re.sub(r"[^A-Za-z0-9_.:-]", "", action)[:80] or "sans_nom"
+            unknown_action_totals[safe_action] = (
+                unknown_action_totals.get(safe_action, 0) + requests
+            )
 
     storage_groups = account.get("storage") or []
     if storage_groups and isinstance(storage_groups[0], dict):
@@ -489,6 +511,10 @@ def r2_usage_summary(
             ),
             "free_operations": operation_totals["free"],
             "unknown_operations": operation_totals["unknown"],
+            "unknown_operation_types": [
+                {"action": action, "requests": requests}
+                for action, requests in sorted(unknown_action_totals.items())
+            ],
         }
     )
     if not summary["billing_ready"]:

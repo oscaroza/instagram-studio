@@ -216,11 +216,21 @@ def test_r2_dashboard_classifies_monthly_operations_and_storage():
     assert result["class_b"]["used"] == 5000
     assert result["free_operations"] == 8
     assert result["unknown_operations"] == 2
+    assert result["unknown_operation_types"] == [
+        {"action": "FutureAction", "requests": 2}
+    ]
     assert result["bucket_storage_bytes"] == 2_000_000_000
     assert result["account_storage_bytes"] == 2_400_002_000
     assert analytics_client.request["headers"]["Authorization"] == "Bearer analytics-secret-token"
     assert analytics_client.request["json"]["variables"]["startDate"].startswith("2026-08-24")
     assert billing_client.requests[0]["headers"]["Authorization"] == "Bearer billing-secret-token"
+
+
+def test_r2_operation_aliases_follow_cloudflare_pricing_categories():
+    assert cloudflare_usage._operation_class("ListObjectsV1") == "class_a"
+    assert cloudflare_usage._operation_class("CreateBucket") == "class_a"
+    assert cloudflare_usage._operation_class("DeleteObjects") == "free"
+    assert cloudflare_usage._operation_class("FutureAction") == "unknown"
 
 
 def test_r2_dashboard_falls_back_to_analytics_on_verified_billing_cycle():
@@ -279,6 +289,7 @@ def test_r2_dashboard_falls_back_to_analytics_on_verified_billing_cycle():
     assert result["billing_period_ready"] is True
     assert result["billing_authoritative"] is False
     assert result["usage_source"] == "analytics_billing_period"
+    assert "alpha restreint" in result["billing_error"]
     assert result["class_a"]["used"] == 73
     assert result["class_b"]["used"] == 14
     assert analytics_client.request["json"]["variables"]["startDate"].startswith("2026-08-24")
