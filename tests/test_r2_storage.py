@@ -230,6 +230,11 @@ def test_r2_operation_aliases_follow_cloudflare_pricing_categories():
     assert cloudflare_usage._operation_class("ListObjectsV1") == "class_a"
     assert cloudflare_usage._operation_class("CreateBucket") == "class_a"
     assert cloudflare_usage._operation_class("DeleteObjects") == "free"
+    assert (
+        cloudflare_usage._operation_class("GetBucketNotificationConfiguration")
+        == "class_b"
+    )
+    assert cloudflare_usage._operation_class("GetBucketSippyConfiguration") == "class_b"
     assert cloudflare_usage._operation_class("FutureAction") == "unknown"
 
 

@@ -39,6 +39,11 @@ CLASS_B_ACTIONS = {
     "getbucketlocation",
     "getbucketcors",
     "getbucketlifecycleconfiguration",
+    # Read-only configuration lookups emitted by the Cloudflare dashboard/API.
+    # Counting undocumented reads as Class B is conservative: it can only make
+    # the displayed remaining quota lower, never hide billable usage.
+    "getbucketnotificationconfiguration",
+    "getbucketsippyconfiguration",
 }
 FREE_ACTIONS = {"deleteobject", "deletebucket", "abortmultipartupload"}
 ACTION_ALIASES = {

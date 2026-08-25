@@ -781,10 +781,6 @@ async function loadR2Usage(){
         const details=(usage.unknown_operation_types||[]).map(item=>`${item.action} (${formatStat(item.requests)})`).join(', ');
         warnings.push(`${formatStat(unknown)} opération(s) non classée(s)${details?` : ${details}`:''}. Elles ne sont ajoutées ni à A ni à B tant que Cloudflare ne documente pas leur catégorie.`);
       }
-      if(!usage.billing_authoritative){
-        warnings.push('Les compteurs A/B viennent d’Analytics sur le cycle de facturation. Le dashboard Cloudflare Billing reste la valeur de référence pour la facture.');
-        if(usage.billing_error)warnings.push(`API Billing : ${usage.billing_error}`);
-      }
     }else{
       renderR2Quota('r2ClassA',0,1000000,formatStat);renderR2Quota('r2ClassB',0,10000000,formatStat);
       $('r2ClassAValue').textContent='Facturation non vérifiée';$('r2ClassBValue').textContent='Facturation non vérifiée';
