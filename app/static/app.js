@@ -1,16 +1,18 @@
 const $ = (id) => document.getElementById(id);
 const fields = [
   'mediaKind','mediaItemsJson','videoUrl','libraryId','thumbnailUrl','description','location','drone','language',
-  'tone','extra','caption','hashtags','altText','hook','publicationMode'
+  'tone','extra','calendarEntryTitle','caption','hashtags','altText','hook','publicationMode'
 ];
 const statusLabels = {
-  scheduled:'Programmée', publishing:'Publication…', published:'Publiée',
+  scheduled:'Programmée', publishing:'Publication en cours', published:'Publiée',
   failed:'Échec', cancelled:'Annulée', awaiting_manual:'À finaliser dans Instagram'
 };
 let calendarCursor = new Date();
-calendarCursor.setDate(1);
 let calendarView = (()=>{try{return localStorage.getItem('igstudio.calendarView')||'month';}catch{return 'month';}})();
+let calendarListRange = (()=>{try{return localStorage.getItem('igstudio.calendarListRange')||'month';}catch{return 'month';}})();
 if(!['month','week','list'].includes(calendarView))calendarView='month';
+if(!['month','week','today'].includes(calendarListRange))calendarListRange='month';
+if(calendarView==='month'||(calendarView==='list'&&calendarListRange==='month'))calendarCursor.setDate(1);
 let selectedMediaItems = [];
 let libraryItems = [];
 let analyticsPosts = [];
@@ -516,7 +518,7 @@ function renderDrafts(){
   for(const draft of list){
     const el=document.createElement('div');el.className='draft-item';
     el.innerHTML='<h3></h3><p></p><div class="draft-actions"><button class="secondary load">Ouvrir</button><button class="ghost del">Supprimer</button></div>';
-    el.querySelector('h3').textContent=(draft.location||draft.description||'Brouillon').slice(0,70);
+    el.querySelector('h3').textContent=(draft.calendarEntryTitle||draft.location||draft.description||'Brouillon').slice(0,70);
     el.querySelector('p').textContent=new Date(draft.savedAt).toLocaleString();
     el.querySelector('.load').onclick=()=>loadDraft(draft.id);el.querySelector('.del').onclick=()=>deleteDraft(draft.id);root.appendChild(el);
   }
@@ -543,7 +545,7 @@ function publicationPayload(){
     items=[{url:publicUrl,library_id:$('libraryId').value,thumbnail_url:$('thumbnailUrl').value,media_type:urlMediaType,name:urlMediaType==='video'?'Vidéo par URL':'Photo par URL'}];
   }
   return {
-    title:($('location').value||$('description').value||'Publication Instagram').trim(),
+    title:($('calendarEntryTitle').value||$('location').value||$('description').value||'Publication Instagram').trim(),
     media_kind:mediaKind,media_items:items,
     video_url:mediaKind==='reel'||mediaKind==='story'&&items[0]?.media_type==='video'?(items[0]?.url||''):'',image_url:mediaKind==='photo'||mediaKind==='story'&&items[0]?.media_type==='image'?(items[0]?.url||''):'',library_id:items[0]?.library_id||'',
     story_media_type:mediaKind==='story'?(items[0]?.media_type||''):'',
@@ -877,23 +879,43 @@ for(const id of ['librarySearch','libraryTypeFilter','libraryDateFilter','librar
 
 function startOfWeek(value){const date=new Date(value);date.setHours(0,0,0,0);date.setDate(date.getDate()-((date.getDay()+6)%7));return date;}
 function calendarBounds(){
-  if(calendarView==='week'){const start=startOfWeek(calendarCursor);const end=new Date(start);end.setDate(end.getDate()+7);return {start,end};}
+  if(calendarView==='list'&&calendarListRange==='today'){const start=new Date(calendarCursor);start.setHours(0,0,0,0);const end=new Date(start);end.setDate(end.getDate()+1);return {start,end};}
+  if(calendarView==='week'||(calendarView==='list'&&calendarListRange==='week')){const start=startOfWeek(calendarCursor);const end=new Date(start);end.setDate(end.getDate()+7);return {start,end};}
   const start=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth(),1);const end=new Date(calendarCursor.getFullYear(),calendarCursor.getMonth()+1,1);return {start,end};
 }
 function eventDate(item){return new Date(item.scheduled_for||item.published_at||item.created_at);}
 function localDateKey(date){return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;}
 function calendarTitle(start,end){
-  if(calendarView==='week'){
+  if(calendarView==='list'&&calendarListRange==='today')return start.toLocaleDateString('fr-FR',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
+  if(calendarView==='week'||(calendarView==='list'&&calendarListRange==='week')){
     const last=new Date(end);last.setDate(last.getDate()-1);
     return `${start.toLocaleDateString('fr-FR',{day:'numeric',month:'short'})} – ${last.toLocaleDateString('fr-FR',{day:'numeric',month:'short',year:'numeric'})}`;
   }
   return new Intl.DateTimeFormat('fr-FR',{month:'long',year:'numeric'}).format(start);
 }
+function calendarListHeading(){
+  if(calendarView==='week'||(calendarView==='list'&&calendarListRange==='week'))return 'Publications de la semaine';
+  if(calendarView==='list'&&calendarListRange==='today')return 'Publications d’aujourd’hui';
+  return 'Publications du mois';
+}
+function calendarEmptyPeriod(){
+  if(calendarView==='week'||(calendarView==='list'&&calendarListRange==='week'))return 'cette semaine';
+  if(calendarView==='list'&&calendarListRange==='today')return 'aujourd’hui';
+  return 'ce mois-ci';
+}
+function resetCalendarCursor(){calendarCursor=new Date();if(calendarView==='month'||(calendarView==='list'&&calendarListRange==='month'))calendarCursor.setDate(1);}
+function shiftCalendarCursor(direction){
+  if(calendarView==='week'||(calendarView==='list'&&calendarListRange==='week'))calendarCursor.setDate(calendarCursor.getDate()+(direction*7));
+  else if(calendarView==='list'&&calendarListRange==='today')calendarCursor.setDate(calendarCursor.getDate()+direction);
+  else calendarCursor.setMonth(calendarCursor.getMonth()+direction);
+}
 async function loadCalendar(){
   const {start,end}=calendarBounds();$('calendarTitle').textContent=calendarTitle(start,end);hideNotice('calendarNotice');
   document.querySelectorAll('[data-calendar-view]').forEach(button=>{const active=button.dataset.calendarView===calendarView;button.className=active?'secondary active':'ghost';});
-  const listOnly=calendarView==='list';document.querySelector('.calendar-weekdays').classList.toggle('hidden',listOnly);$('calendarGrid').classList.toggle('hidden',listOnly);$('calendarDragHelp').classList.toggle('hidden',listOnly);
-  $('calendarListTitle').textContent=calendarView==='week'?'Publications de la semaine':calendarView==='list'?'Publications du mois • liste':'Publications du mois';
+  const listOnly=calendarView==='list';$('calendarListRange').classList.toggle('hidden',!listOnly);
+  document.querySelectorAll('[data-calendar-list-range]').forEach(button=>{const active=button.dataset.calendarListRange===calendarListRange;button.className=active?'secondary active':'ghost';});
+  document.querySelector('.calendar-weekdays').classList.toggle('hidden',listOnly);$('calendarGrid').classList.toggle('hidden',listOnly);$('calendarDragHelp').classList.toggle('hidden',listOnly);
+  $('calendarListTitle').textContent=calendarListHeading();
   try{const data=await api(`/api/publications/calendar?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);renderCalendar(data.items,start,end);}
   catch(err){setNotice('calendarNotice',err.message,'error');$('calendarGrid').innerHTML='';$('calendarList').innerHTML='';}
 }
@@ -951,12 +973,14 @@ function renderCalendar(items,start,end){
   }else if(calendarView==='week'){
     for(let date=new Date(start);date<end;date.setDate(date.getDate()+1))grid.appendChild(calendarDayCell(new Date(date),items));
   }
-  if(!items.length){list.innerHTML=`<p class="muted">Aucune publication ${calendarView==='week'?'cette semaine':'ce mois-ci'}.</p>`;return;}
+  if(!items.length){list.innerHTML=`<p class="muted">Aucune publication ${calendarEmptyPeriod()}.</p>`;return;}
   for(const item of [...items].sort((a,b)=>eventDate(a)-eventDate(b))){
-    const row=document.createElement('article');row.className='publication-item';row.id=`publication-${item.id}`;
-    row.innerHTML='<div><strong class="title"></strong><p class="muted small details"></p><p class="error-text"></p></div><div class="publication-actions"></div>';
+    const statusKey=Object.prototype.hasOwnProperty.call(statusLabels,item.status)?item.status:'unknown';
+    const row=document.createElement('article');row.className=`publication-item status-${statusKey}`;row.id=`publication-${item.id}`;
+    row.innerHTML='<div><div class="publication-item-heading"><strong class="title"></strong><span class="publication-status"></span></div><p class="muted small details"></p><p class="error-text"></p></div><div class="publication-actions"></div>';
     const mediaLabel={photo:'Photo',carousel:'Carrousel',reel:'Reel',story:'Story'}[item.media_kind||'reel'];
-    row.querySelector('.title').textContent=item.title||'Publication Instagram';row.querySelector('.details').textContent=`${eventDate(item).toLocaleString('fr-FR')} • ${mediaLabel} • ${statusLabels[item.status]||item.status}${item.publication_mode==='trial'?' • Trial Reel':''}${item.workflow==='manual_music'?' • Musique manuelle':''}`;
+    row.querySelector('.title').textContent=item.title||'Publication Instagram';row.querySelector('.details').textContent=`${eventDate(item).toLocaleString('fr-FR')} • ${mediaLabel}${item.publication_mode==='trial'?' • Trial Reel':''}${item.workflow==='manual_music'?' • Musique manuelle':''}`;
+    const statusBadge=row.querySelector('.publication-status');statusBadge.className=`publication-status status-${statusKey}`;statusBadge.textContent=statusLabels[item.status]||item.status||'Statut inconnu';
     if(item.last_error)row.querySelector('.error-text').textContent=item.last_error;
     if(['scheduled','failed','awaiting_manual'].includes(item.status)){const cancel=document.createElement('button');cancel.className='ghost';cancel.textContent='Annuler';cancel.onclick=async()=>{if(!confirm('Annuler cette publication ?'))return;try{await api(`/api/publications/${item.id}`,{method:'DELETE'});loadCalendar();}catch(err){setNotice('calendarNotice',err.message,'error');}};row.querySelector('.publication-actions').appendChild(cancel);}
     if(item.status==='awaiting_manual'){
@@ -966,10 +990,11 @@ function renderCalendar(items,start,end){
     list.appendChild(row);
   }
 }
-$('calendarPrev').addEventListener('click',()=>{if(calendarView==='week')calendarCursor.setDate(calendarCursor.getDate()-7);else calendarCursor.setMonth(calendarCursor.getMonth()-1);loadCalendar();});
-$('calendarNext').addEventListener('click',()=>{if(calendarView==='week')calendarCursor.setDate(calendarCursor.getDate()+7);else calendarCursor.setMonth(calendarCursor.getMonth()+1);loadCalendar();});
-$('calendarToday').addEventListener('click',()=>{calendarCursor=new Date();if(calendarView!=='week')calendarCursor.setDate(1);loadCalendar();});
-document.querySelectorAll('[data-calendar-view]').forEach(button=>button.addEventListener('click',()=>{calendarView=button.dataset.calendarView;if(calendarView!=='week')calendarCursor.setDate(1);try{localStorage.setItem('igstudio.calendarView',calendarView);}catch{}loadCalendar();}));
+$('calendarPrev').addEventListener('click',()=>{shiftCalendarCursor(-1);loadCalendar();});
+$('calendarNext').addEventListener('click',()=>{shiftCalendarCursor(1);loadCalendar();});
+$('calendarToday').addEventListener('click',()=>{resetCalendarCursor();loadCalendar();});
+document.querySelectorAll('[data-calendar-view]').forEach(button=>button.addEventListener('click',()=>{calendarView=button.dataset.calendarView;resetCalendarCursor();try{localStorage.setItem('igstudio.calendarView',calendarView);}catch{}loadCalendar();}));
+document.querySelectorAll('[data-calendar-list-range]').forEach(button=>button.addEventListener('click',()=>{calendarListRange=button.dataset.calendarListRange;resetCalendarCursor();try{localStorage.setItem('igstudio.calendarListRange',calendarListRange);}catch{}loadCalendar();}));
 
 function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
 function statsPeriodValue(){return Number($('statsPeriod').value)||30;}

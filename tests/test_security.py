@@ -538,11 +538,19 @@ def test_phase_two_organization_controls_are_available():
     assert 'data-calendar-view="month"' in page.text
     assert 'data-calendar-view="week"' in page.text
     assert 'data-calendar-view="list"' in page.text
+    assert 'id="calendarListRange"' in page.text
+    assert 'data-calendar-list-range="month"' in page.text
+    assert 'data-calendar-list-range="week"' in page.text
+    assert 'data-calendar-list-range="today"' in page.text
+    assert 'id="calendarEntryTitle"' in page.text
     assert 'id="librarySearch"' in page.text
     assert 'id="libraryUsageFilter"' in page.text
     assert 'id="carouselOrderHelp"' in page.text
     assert "startMediaPointerDrag" in script.text
     assert "moveScheduledPublication" in script.text
+    assert "calendarListHeading" in script.text
+    assert "publication-status status-" in script.text
+    assert "$('calendarEntryTitle').value" in script.text
     assert "/schedule" in script.text
 
 

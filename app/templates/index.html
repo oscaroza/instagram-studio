@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=26">
+  <link rel="stylesheet" href="/static/styles.css?v=29">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}" data-max-upload-mb="{{ max_upload_mb }}" data-density="{{ appearance.density }}" style="--bg:{{ appearance.background }};--surface:{{ appearance.surface }};--text:{{ appearance.text }};--accent:{{ appearance.accent }};--accent2:{{ appearance.accent }};--accent-contrast:{{ appearance.accent_text }};--card-radius:{{ appearance.radius }}px">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -119,6 +119,10 @@
           <h2>3. Publication</h2>
           <span id="aiBadge" class="pill">Pas encore générée</span>
         </div>
+        <label>Titre calendrier <span class="muted small">(optionnel)</span>
+          <input id="calendarEntryTitle" maxlength="120" placeholder="Ex : Lever de soleil à Gigaro">
+        </label>
+        <p class="muted small">Ce nom sert uniquement à reconnaître la publication dans le calendrier et les notifications.</p>
         <label>Caption
           <textarea id="caption" rows="8" placeholder="La caption apparaîtra ici…"></textarea>
         </label>
@@ -192,6 +196,14 @@
             <button class="ghost" data-calendar-view="list" type="button">Liste</button>
           </div>
           <button id="calendarToday" class="ghost" type="button">Aujourd’hui</button>
+        </div>
+        <div id="calendarListRange" class="calendar-list-range hidden">
+          <span class="muted small">Période de la liste</span>
+          <div class="view-switch" aria-label="Période affichée dans la liste">
+            <button class="secondary active" data-calendar-list-range="month" type="button">Mois</button>
+            <button class="ghost" data-calendar-list-range="week" type="button">Semaine</button>
+            <button class="ghost" data-calendar-list-range="today" type="button">Aujourd’hui</button>
+          </div>
         </div>
         <p id="calendarDragHelp" class="muted small">Fais glisser une publication programmée vers un autre jour pour la déplacer.</p>
         <div class="calendar-weekdays"><span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span><span>Ven</span><span>Sam</span><span>Dim</span></div>
@@ -572,6 +584,6 @@
   </main>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=35"></script>
+  <script src="/static/app.js?v=38"></script>
 </body>
 </html>
