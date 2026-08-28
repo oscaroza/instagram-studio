@@ -68,6 +68,11 @@ class Settings:
         "openai/gpt-oss-20b",
     )
 
+    cerebras_vision_model: str = os.getenv(
+        "CEREBRAS_VISION_MODEL",
+        "qwen/qwen3.6-27b",
+    )
+
     cerebras_base_url: str = os.getenv(
         "CEREBRAS_BASE_URL",
         "https://api.groq.com/openai/v1",
@@ -209,6 +214,16 @@ class Settings:
 
     analytics_max_media: int = int(
         os.getenv("ANALYTICS_MAX_MEDIA", "100")
+    )
+
+    autopilot_frame_count: int = min(
+        5,
+        max(1, int(os.getenv("AUTOPILOT_FRAME_COUNT", "5"))),
+    )
+
+    autopilot_default_posts_per_week: int = min(
+        7,
+        max(1, int(os.getenv("AUTOPILOT_DEFAULT_POSTS_PER_WEEK", "3"))),
     )
 
     # ------------------------------------------------------------

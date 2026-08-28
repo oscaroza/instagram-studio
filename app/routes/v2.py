@@ -17,6 +17,11 @@ from app.services.analytics import (
     save_content_ideas,
     sync_instagram_analytics,
 )
+from app.services.autopilot import (
+    AutopilotError,
+    analyze_autopilot_media,
+    generate_autopilot_plan,
+)
 from app.services.cerebras import (
     CerebrasError,
     analyze_instagram_performance,
@@ -861,6 +866,13 @@ async def remove_library_media(media_id: str):
                 "status": {"$in": ["scheduled", "publishing", "awaiting_manual"]},
             }
         )
+        if not active:
+            active = database().autopilot_queue.find_one(
+                {
+                    "library_ids": media_id,
+                    "status": {"$in": list(AUTOPILOT_ACTIVE_STATUSES)},
+                }
+            )
         return media, active
 
     media, active = await asyncio.to_thread(load)
@@ -868,7 +880,7 @@ async def remove_library_media(media_id: str):
         return api_error("Média introuvable.", 404)
     if active:
         return api_error(
-            "Ce média est utilisé par une publication programmée. Annule-la d’abord.",
+            "Ce média est utilisé par une publication programmée ou par Auto-pilot. Retire-la d’abord.",
             409,
         )
 
@@ -1027,6 +1039,315 @@ async def create_publication(payload: dict):
 
     document["_id"] = result.inserted_id
     return {"ok": True, "publication": serialize_document(document)}
+
+
+AUTOPILOT_ACTIVE_STATUSES = {
+    "queued",
+    "analyzing",
+    "analyzed",
+    "analysis_failed",
+    "planned",
+}
+
+
+def _autopilot_payload(payload: dict, media_kind: str, media_items: list[dict]) -> dict:
+    return {
+        "title": str(payload.get("title") or "Publication Instagram").strip()[:120]
+        or "Publication Instagram",
+        "description": str(payload.get("description") or "").strip()[:1200],
+        "location": str(payload.get("location") or "").strip()[:300],
+        "device": str(payload.get("device") or "").strip()[:300],
+        "media_kind": media_kind,
+        "media_items": media_items,
+        "video_url": str(payload.get("video_url") or "").strip(),
+        "image_url": str(payload.get("image_url") or "").strip(),
+        "library_id": str(payload.get("library_id") or "").strip(),
+        "story_media_type": str(payload.get("story_media_type") or "").strip(),
+        "thumbnail_url": str(payload.get("thumbnail_url") or "").strip(),
+        "caption": str(payload.get("caption") or "").strip(),
+        "hook": str(payload.get("hook") or "").strip(),
+        "alt_text": str(payload.get("alt_text") or "").strip(),
+        "publication_mode": str(payload.get("publication_mode") or "normal").lower(),
+        "workflow": str(payload.get("workflow") or "auto_publish").lower(),
+        "mute_audio": bool(payload.get("mute_audio")),
+        "timezone": str(payload.get("timezone") or "Europe/Paris")[:80],
+    }
+
+
+@router.get("/autopilot/queue")
+async def list_autopilot_queue():
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        documents = await asyncio.to_thread(
+            lambda: list(database().autopilot_queue.find({}).sort("created_at", -1).limit(200))
+        )
+    except Exception:
+        return api_error("File Auto-pilot temporairement indisponible.", 503)
+    return {
+        "ok": True,
+        "items": [serialize_document(document) for document in documents],
+        "vision_model": settings.cerebras_vision_model,
+        "default_posts_per_week": settings.autopilot_default_posts_per_week,
+    }
+
+
+@router.post("/autopilot/queue")
+async def add_autopilot_queue(payload: dict):
+    if not database_configured() or not media_storage_configured():
+        return api_error("MongoDB ou le stockage média n’est pas configuré.", 503)
+    media_kind = str(payload.get("media_kind") or "reel").strip().lower()
+    if media_kind not in {"reel", "photo", "carousel", "story"}:
+        return api_error("Type de publication invalide.")
+    if media_kind == "story" and not settings.enable_instagram_stories:
+        return api_error("Les Stories sont désactivées sur ce déploiement.", 409)
+    try:
+        media_items = publication_media_items(payload, media_kind)
+        publication_mode = str(payload.get("publication_mode") or "normal").lower()
+        workflow = str(payload.get("workflow") or "auto_publish").lower()
+        publication_checks(
+            media_kind=media_kind,
+            media_items=media_items,
+            caption=str(payload.get("caption") or ""),
+            publication_mode=publication_mode,
+            workflow=workflow,
+        )
+    except ValueError as exc:
+        return api_error(str(exc))
+    library_ids = [str(item.get("library_id") or "") for item in media_items]
+    if not all(library_ids):
+        return api_error("Chaque média Auto-pilot doit être enregistré dans la bibliothèque.")
+    try:
+        identifiers = [object_id(value) for value in library_ids]
+    except ValueError as exc:
+        return api_error(str(exc))
+    normalized = _autopilot_payload(payload, media_kind, media_items)
+    queue_key = publication_fingerprint(
+        media_kind=media_kind,
+        media_items=media_items,
+        caption=normalized["caption"],
+        publication_mode=normalized["publication_mode"],
+        workflow=normalized["workflow"],
+        scheduled_for="autopilot",
+    )
+
+    def insert():
+        if database().media.count_documents({"_id": {"$in": identifiers}}) != len(set(identifiers)):
+            raise ValueError("Un média de la file n’existe plus dans la bibliothèque.")
+        duplicate = database().autopilot_queue.find_one(
+            {"queue_key": queue_key, "status": {"$in": list(AUTOPILOT_ACTIVE_STATUSES)}}
+        )
+        if duplicate:
+            raise RuntimeError("duplicate")
+        now = utc_now()
+        document = {
+            **normalized,
+            "payload": normalized,
+            "library_ids": library_ids,
+            "queue_key": queue_key,
+            "status": "queued",
+            "created_at": now,
+            "updated_at": now,
+        }
+        result = database().autopilot_queue.insert_one(document)
+        document["_id"] = result.inserted_id
+        return document
+
+    try:
+        document = await asyncio.to_thread(insert)
+    except ValueError as exc:
+        return api_error(str(exc), 409)
+    except RuntimeError as exc:
+        if str(exc) == "duplicate":
+            return api_error("Cette création est déjà dans la file Auto-pilot.", 409)
+        return api_error("Impossible d’ajouter la création à Auto-pilot.", 503)
+    except Exception:
+        return api_error("Impossible d’ajouter la création à Auto-pilot.", 503)
+    return {"ok": True, "item": serialize_document(document)}
+
+
+@router.delete("/autopilot/queue/{queue_id}")
+async def remove_autopilot_queue_item(queue_id: str):
+    if not database_configured():
+        return api_error("MongoDB n’est pas configuré.", 503)
+    try:
+        identifier = object_id(queue_id)
+    except ValueError as exc:
+        return api_error(str(exc))
+    item = await asyncio.to_thread(database().autopilot_queue.find_one, {"_id": identifier})
+    if not item:
+        return api_error("Élément Auto-pilot introuvable.", 404)
+    if item.get("status") == "scheduled":
+        return api_error("Cette publication est déjà programmée. Annule-la depuis le calendrier.", 409)
+    await asyncio.to_thread(database().autopilot_queue.delete_one, {"_id": identifier})
+    return {"ok": True}
+
+
+@router.post("/autopilot/queue/{queue_id}/analyze")
+async def analyze_autopilot_queue_item(queue_id: str):
+    if not database_configured():
+        return api_error("MongoDB n’est pas configuré.", 503)
+    try:
+        identifier = object_id(queue_id)
+    except ValueError as exc:
+        return api_error(str(exc))
+    item = await asyncio.to_thread(database().autopilot_queue.find_one, {"_id": identifier})
+    if not item:
+        return api_error("Élément Auto-pilot introuvable.", 404)
+    if item.get("status") == "scheduled":
+        return api_error("Cette publication est déjà programmée.", 409)
+    await asyncio.to_thread(
+        database().autopilot_queue.update_one,
+        {"_id": identifier},
+        {"$set": {"status": "analyzing", "updated_at": utc_now()}, "$unset": {"last_error": ""}},
+    )
+    try:
+        id_order = [object_id(value) for value in item.get("library_ids") or []]
+        media_documents = await asyncio.to_thread(
+            lambda: list(database().media.find({"_id": {"$in": id_order}}))
+        )
+        media_by_id = {document["_id"]: document for document in media_documents}
+        media_documents = [media_by_id[value] for value in id_order if value in media_by_id]
+        if len(media_documents) != len(id_order):
+            raise AutopilotError("Un média de la file n’existe plus dans la bibliothèque.")
+        analysis = await analyze_autopilot_media(
+            media_documents,
+            {
+                "title": item.get("title"),
+                "description": item.get("description"),
+                "location": item.get("location"),
+                "device": item.get("device"),
+                "media_kind": item.get("media_kind"),
+            },
+        )
+        analyzed_at = utc_now()
+        await asyncio.to_thread(
+            database().autopilot_queue.update_one,
+            {"_id": identifier},
+            {
+                "$set": {
+                    "status": "analyzed",
+                    "visual_analysis": analysis,
+                    "vision_model": settings.cerebras_vision_model,
+                    "analyzed_at": analyzed_at,
+                    "updated_at": analyzed_at,
+                }
+            },
+        )
+    except AutopilotError as exc:
+        await asyncio.to_thread(
+            database().autopilot_queue.update_one,
+            {"_id": identifier},
+            {"$set": {"status": "analysis_failed", "last_error": str(exc)[:700], "updated_at": utc_now()}},
+        )
+        return api_error(str(exc), 502)
+    except Exception:
+        message = "Analyse visuelle temporairement indisponible."
+        await asyncio.to_thread(
+            database().autopilot_queue.update_one,
+            {"_id": identifier},
+            {"$set": {"status": "analysis_failed", "last_error": message, "updated_at": utc_now()}},
+        )
+        return api_error(message, 503)
+    return {"ok": True, "analysis": analysis, "model": settings.cerebras_vision_model}
+
+
+@router.post("/autopilot/plan")
+async def plan_autopilot_queue(payload: dict):
+    if not database_configured():
+        return api_error("MongoDB n’est pas configuré.", 503)
+    try:
+        posts_per_week = min(7, max(1, int(payload.get("posts_per_week") or settings.autopilot_default_posts_per_week)))
+    except (TypeError, ValueError):
+        return api_error("Fréquence Auto-pilot invalide.")
+    timezone_name = str(payload.get("timezone") or "Europe/Paris")[:80]
+    try:
+        queue_items = await asyncio.to_thread(
+            lambda: list(
+                database().autopilot_queue.find(
+                    {"status": {"$in": ["analyzed", "planned"]}}
+                ).sort("created_at", 1).limit(100)
+            )
+        )
+        if not queue_items:
+            return api_error("Analyse d’abord les médias présents dans la file.", 409)
+        try:
+            dashboard = await asyncio.to_thread(build_analytics_dashboard, timezone_name, 90)
+        except AnalyticsError:
+            dashboard = {"summary": {}, "best_times": [], "automatic_findings": ["Historique insuffisant : créneaux prudents par défaut."]}
+        existing_documents = await asyncio.to_thread(
+            lambda: list(
+                database().publications.find(
+                    {"status": {"$in": ["scheduled", "publishing"]}, "scheduled_for": {"$gte": utc_now()}},
+                    {"scheduled_for": 1},
+                )
+            )
+        )
+        plan = await generate_autopilot_plan(
+            queue_items=queue_items,
+            dashboard=dashboard,
+            existing_dates=[item["scheduled_for"] for item in existing_documents if isinstance(item.get("scheduled_for"), datetime)],
+            posts_per_week=posts_per_week,
+            timezone_name=timezone_name,
+        )
+        planned_at = utc_now()
+        proposals = {item["queue_id"]: item for item in plan["items"]}
+        for item in queue_items:
+            queue_id = str(item["_id"])
+            proposal = dict(proposals[queue_id])
+            proposal["scheduled_for"] = parse_datetime(proposal["scheduled_for"])
+            await asyncio.to_thread(
+                database().autopilot_queue.update_one,
+                {"_id": item["_id"]},
+                {"$set": {"status": "planned", "proposal": proposal, "planned_at": planned_at, "updated_at": planned_at}},
+            )
+    except AutopilotError as exc:
+        return api_error(str(exc), 502)
+    except Exception:
+        return api_error("Création du planning Auto-pilot indisponible.", 503)
+    return {"ok": True, "plan": plan, "model": settings.cerebras_model}
+
+
+@router.post("/autopilot/queue/{queue_id}/approve")
+async def approve_autopilot_queue_item(queue_id: str, payload: dict):
+    if not database_configured():
+        return api_error("MongoDB n’est pas configuré.", 503)
+    try:
+        identifier = object_id(queue_id)
+    except ValueError as exc:
+        return api_error(str(exc))
+    item = await asyncio.to_thread(database().autopilot_queue.find_one, {"_id": identifier})
+    if not item:
+        return api_error("Élément Auto-pilot introuvable.", 404)
+    if item.get("status") != "planned":
+        return api_error("Cette proposition doit d’abord être analysée et planifiée.", 409)
+    proposal = item.get("proposal") or {}
+    scheduled_value = payload.get("scheduled_for") or proposal.get("scheduled_for")
+    try:
+        scheduled_for = parse_datetime(scheduled_value)
+    except ValueError as exc:
+        return api_error(str(exc))
+    publication_payload = dict(item.get("payload") or {})
+    publication_payload["scheduled_for"] = scheduled_for.isoformat()
+    result = await create_publication(publication_payload)
+    if isinstance(result, JSONResponse):
+        return result
+    publication = result.get("publication") or {}
+    approved_at = utc_now()
+    await asyncio.to_thread(
+        database().autopilot_queue.update_one,
+        {"_id": identifier, "status": "planned"},
+        {
+            "$set": {
+                "status": "scheduled",
+                "publication_id": publication.get("id"),
+                "proposal.scheduled_for": scheduled_for,
+                "approved_at": approved_at,
+                "updated_at": approved_at,
+            }
+        },
+    )
+    return {"ok": True, "publication": publication}
 
 
 @router.get("/publications/calendar")

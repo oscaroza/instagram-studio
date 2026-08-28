@@ -18,6 +18,7 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - dashboard statistique avec comparaison sur 7, 30 ou 90 jours et courbe d’évolution fondée sur les relevés MongoDB ;
 - assistant Groq conversationnel dont l’historique reste dans MongoDB et n’est pas renvoyé automatiquement à Groq ;
 - générateur Groq de trois protocoles vidéo orientés croissance, fondés sur les statistiques anonymisées et un brief matériel/contraintes, avec sauvegarde du dernier plan dans MongoDB ;
+- file Auto-pilot avec analyse visuelle de cinq images représentatives maximum, proposition de créneaux fondée sur les statistiques et validation humaine obligatoire avant chaque programmation ;
 - connexion Face ID, Touch ID ou passkey WebAuthn, avec le code d’accès conservé comme secours ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement ;
 - vérification avant envoi et protection de 15 minutes contre une double publication identique.
@@ -55,6 +56,10 @@ LOGIN_LOCKOUT_MINUTES=15
 CEREBRAS_API_KEY=TA_CLE_GROQ
 CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
 CEREBRAS_MODEL=openai/gpt-oss-20b
+CEREBRAS_VISION_MODEL=qwen/qwen3.6-27b
+# Facultatif : 5 images maximum et 3 publications par semaine par défaut
+AUTOPILOT_FRAME_COUNT=5
+AUTOPILOT_DEFAULT_POSTS_PER_WEEK=3
 ENABLE_INSTAGRAM_STORIES=true
 
 MONGODB_URI=mongodb+srv://UTILISATEUR:MOT_DE_PASSE_ENCODE@instagram-studio.kecpds1.mongodb.net/?retryWrites=true&w=majority&appName=instagram-studio
@@ -81,6 +86,8 @@ VAPID_PUBLIC_KEY=...
 VAPID_PRIVATE_KEY=...
 VAPID_SUBJECT=mailto:ton-adresse@example.com
 ```
+
+Auto-pilot enregistre d’abord les médias dans R2, puis Groq Vision analyse quelques images extraites sans recevoir les tokens Instagram. Le planificateur tient compte des publications déjà programmées. Les propositions restent modifiables et aucune publication n’est ajoutée au calendrier avant une validation explicite. Si l’option musique est activée, le créneau peut être proposé mais la finalisation dans Instagram reste manuelle.
 
 Le mot de passe MongoDB doit être encodé pour une URL s’il contient des caractères spéciaux. Comme un ancien mot de passe a été partagé dans une conversation, il doit être révoqué et remplacé dans Atlas avant le déploiement.
 

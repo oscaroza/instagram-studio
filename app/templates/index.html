@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=29">
+  <link rel="stylesheet" href="/static/styles.css?v=30">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}" data-max-upload-mb="{{ max_upload_mb }}" data-density="{{ appearance.density }}" style="--bg:{{ appearance.background }};--surface:{{ appearance.surface }};--text:{{ appearance.text }};--accent:{{ appearance.accent }};--accent2:{{ appearance.accent }};--accent-contrast:{{ appearance.accent_text }};--card-radius:{{ appearance.radius }}px">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -34,6 +34,7 @@
   <main class="shell">
     <nav class="tabs">
       <button class="tab active" data-tab="composer">Créer</button>
+      <button class="tab" data-tab="autopilot">Auto-pilot <span id="autopilotCount">0</span></button>
       <button class="tab" data-tab="drafts">Brouillons <span id="draftCount">0</span></button>
       <button class="tab" data-tab="calendar">Calendrier</button>
       <button class="tab" data-tab="stats">Stats</button>
@@ -158,6 +159,7 @@
         </div>
         <div class="actions">
           <button id="saveDraftBtn" class="secondary">Enregistrer le brouillon</button>
+          <button id="autopilotQueueBtn" class="autopilot-button" type="button">✨ Mettre dans Auto-pilot</button>
           <button id="publishBtn" class="danger">Publier le Reel</button>
         </div>
         <div id="preflightNotice" class="notice hidden"></div>
@@ -179,6 +181,40 @@
             <div id="instagramShareFallback" class="instagram-share-fallback"></div>
           </details>
         </div>
+      </div>
+    </section>
+
+    <section id="autopilot" class="panel">
+      <div class="card autopilot-hero">
+        <span class="eyebrow">PLANIFICATION ASSISTÉE</span>
+        <h2>File d’attente Auto-pilot</h2>
+        <p class="muted">Le Studio analyse des images extraites de tes médias, les compare à tes statistiques et propose un calendrier. Rien n’est programmé sans ta validation.</p>
+        <div class="autopilot-controls">
+          <label>Publications maximum par semaine
+            <select id="autopilotPostsPerWeek">
+              <option value="1">1 par semaine</option>
+              <option value="2">2 par semaine</option>
+              <option value="3" selected>3 par semaine</option>
+              <option value="4">4 par semaine</option>
+              <option value="5">5 par semaine</option>
+              <option value="6">6 par semaine</option>
+              <option value="7">7 par semaine</option>
+            </select>
+          </label>
+          <button id="autopilotAnalyzeBtn" class="primary" type="button">✨ Analyser et proposer les horaires</button>
+        </div>
+        <div id="autopilotProgress" class="upload-transfer hidden" aria-live="polite">
+          <div class="upload-transfer-header"><strong id="autopilotProgressTitle">Analyse de la file…</strong><span id="autopilotProgressPercent">0 %</span></div>
+          <progress id="autopilotProgressBar" max="100" value="0" aria-label="Progression de l’analyse Auto-pilot"></progress>
+          <div class="upload-transfer-details"><span id="autopilotProgressDetail">Préparation…</span></div>
+        </div>
+        <div id="autopilotNotice" class="notice hidden"></div>
+        <div id="autopilotPlanSummary" class="notice hidden"></div>
+      </div>
+      <div class="card result-card">
+        <div class="row-between"><h2>Contenus de la file</h2><button id="refreshAutopilot" class="ghost" type="button">Actualiser</button></div>
+        <p class="muted small">Les médias restent dans ta bibliothèque R2. Retirer un élément de la file ne supprime pas son fichier.</p>
+        <div id="autopilotQueue" class="autopilot-queue"></div>
       </div>
     </section>
 
@@ -584,6 +620,6 @@
   </main>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=38"></script>
+  <script src="/static/app.js?v=39"></script>
 </body>
 </html>

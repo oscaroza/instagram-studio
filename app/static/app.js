@@ -16,7 +16,9 @@ if(calendarView==='month'||(calendarView==='list'&&calendarListRange==='month'))
 let selectedMediaItems = [];
 let libraryItems = [];
 let analyticsPosts = [];
+let autopilotItems = [];
 let preparedInstagramShare = null;
+const autopilotStatusLabels={queued:'Prête à analyser',analyzing:'Analyse en cours',analyzed:'Analysée',analysis_failed:'Analyse à relancer',planned:'Proposition disponible',scheduled:'Programmée'};
 const APPEARANCE_PRESETS = {
   studio:{accent:'#9f7aea',background:'#08090d',surface:'#11131a',text:'#f6f7fb',density:'comfortable',radius:18},
   ocean:{accent:'#28b8d8',background:'#06131d',surface:'#0d2331',text:'#f3fbff',density:'comfortable',radius:18},
@@ -246,6 +248,7 @@ function activateTab(name){
   if(window.matchMedia('(max-width:760px)').matches){tab.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});}
   history.replaceState({},'',`?tab=${name}`);
   if(name==='drafts')renderDrafts();
+  if(name==='autopilot')loadAutopilotQueue();
   if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();loadPasskeys();loadR2Usage();}
   if(name==='customize')loadAppearance();
   if(name==='library')loadLibrary();
@@ -546,6 +549,7 @@ function publicationPayload(){
   }
   return {
     title:($('calendarEntryTitle').value||$('location').value||$('description').value||'Publication Instagram').trim(),
+    description:$('description').value.trim(),location:$('location').value.trim(),device:$('drone').value.trim(),
     media_kind:mediaKind,media_items:items,
     video_url:mediaKind==='reel'||mediaKind==='story'&&items[0]?.media_type==='video'?(items[0]?.url||''):'',image_url:mediaKind==='photo'||mediaKind==='story'&&items[0]?.media_type==='image'?(items[0]?.url||''):'',library_id:items[0]?.library_id||'',
     story_media_type:mediaKind==='story'?(items[0]?.media_type||''):'',
@@ -557,10 +561,38 @@ function publicationPayload(){
   };
 }
 
+function validatePublicationMedia(payload){
+  if(payload.media_kind==='carousel'&&(payload.media_items.length<2||payload.media_items.length>10))return 'Ajoute entre 2 et 10 médias au carrousel.';
+  if(payload.media_kind!=='carousel'&&payload.media_items.length!==1)return 'Ajoute un média ou une URL avant de continuer.';
+  return '';
+}
+
+async function ensureDurablePayloadMedia(payload,noticePrefix='Copie durable vers le stockage média'){
+  const durableItems=payload.media_items.map(item=>({...item}));
+  for(let index=0;index<durableItems.length;index++){
+    const item=durableItems[index];
+    if(item.library_id)continue;
+    setNotice('actionMessage',`${noticePrefix} (${index+1}/${durableItems.length})…`);
+    const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:item.url,media_type:item.media_type,mute_audio:payload.mute_audio,description:payload.title})});
+    durableItems[index]={...item,url:promoted.url,library_id:promoted.media.id,thumbnail_url:promoted.media.thumbnail_url||item.thumbnail_url};
+    payload.media_items=durableItems;selectedMediaItems=durableItems.map(mediaItem=>({...mediaItem}));syncMediaFields();renderSelectedMedia();
+  }
+  payload.media_items=durableItems;selectedMediaItems=durableItems.map(item=>({...item}));syncMediaFields();renderSelectedMedia();
+  payload.library_id=durableItems.length===1?durableItems[0].library_id:'';
+  payload.thumbnail_url=durableItems[0]?.thumbnail_url||'';
+  if(payload.media_kind==='reel')payload.video_url=durableItems[0].url;
+  if(payload.media_kind==='photo')payload.image_url=durableItems[0].url;
+  if(payload.media_kind==='story'){
+    payload.story_media_type=durableItems[0].media_type;
+    if(durableItems[0].media_type==='video')payload.video_url=durableItems[0].url;
+    else payload.image_url=durableItems[0].url;
+  }
+  return payload;
+}
+
 $('publishBtn').addEventListener('click',async()=>{
   const payload=publicationPayload();
-  if(payload.media_kind==='carousel'&&(payload.media_items.length<2||payload.media_items.length>10)){setNotice('actionMessage','Ajoute entre 2 et 10 médias au carrousel.','error');return;}
-  if(payload.media_kind!=='carousel'&&payload.media_items.length!==1){setNotice('actionMessage','Ajoute un média ou une URL avant de continuer.','error');return;}
+  const mediaError=validatePublicationMedia(payload);if(mediaError){setNotice('actionMessage',mediaError,'error');return;}
   const scheduled=$('scheduleEnabled').checked,music=$('musicEnabled').checked;
   if(scheduled){
     if(!$('scheduledFor').value){setNotice('actionMessage','Choisis la date et l’heure.','error');return;}
@@ -575,25 +607,7 @@ $('publishBtn').addEventListener('click',async()=>{
     if(!confirm(question))return;
     btn.textContent='En cours…';
     if(scheduled){
-      const durableItems=payload.media_items.map(item=>({...item}));
-      for(let index=0;index<payload.media_items.length;index++){
-        const item=durableItems[index];
-        if(item.library_id)continue;
-        setNotice('actionMessage',`Copie durable vers le stockage média (${index+1}/${payload.media_items.length})…`);
-        const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:item.url,media_type:item.media_type,mute_audio:payload.mute_audio,description:payload.title})});
-        durableItems[index]={...item,url:promoted.url,library_id:promoted.media.id,thumbnail_url:promoted.media.thumbnail_url||item.thumbnail_url};
-        payload.media_items=durableItems;selectedMediaItems=durableItems.map(mediaItem=>({...mediaItem}));syncMediaFields();renderSelectedMedia();
-      }
-      payload.media_items=durableItems;selectedMediaItems=durableItems.map(item=>({...item}));syncMediaFields();renderSelectedMedia();
-      payload.library_id=durableItems.length===1?durableItems[0].library_id:'';
-      payload.thumbnail_url=durableItems[0]?.thumbnail_url||'';
-      if(payload.media_kind==='reel')payload.video_url=durableItems[0].url;
-      if(payload.media_kind==='photo')payload.image_url=durableItems[0].url;
-      if(payload.media_kind==='story'){
-        payload.story_media_type=durableItems[0].media_type;
-        if(durableItems[0].media_type==='video')payload.video_url=durableItems[0].url;
-        else payload.image_url=durableItems[0].url;
-      }
+      await ensureDurablePayloadMedia(payload);
     }
     if(scheduled||music){
       const data=await api('/api/publications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -616,6 +630,119 @@ $('publishBtn').addEventListener('click',async()=>{
   }catch(err){setNotice('actionMessage',err.message,'error');}
   finally{btn.disabled=false;btn.textContent=oldLabel;updatePublicationOptions();}
 });
+
+$('autopilotQueueBtn').addEventListener('click',async()=>{
+  const payload=publicationPayload(),button=$('autopilotQueueBtn');
+  const mediaError=validatePublicationMedia(payload);if(mediaError){setNotice('actionMessage',mediaError,'error');return;}
+  button.disabled=true;const oldLabel=button.textContent;button.textContent='Ajout à la file…';hideNotice('actionMessage');
+  try{
+    await ensureDurablePayloadMedia(payload,'Enregistrement Auto-pilot dans la bibliothèque');
+    await api('/api/autopilot/queue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    setNotice('actionMessage','Ajouté à la file Auto-pilot ✅','success');playStudioChime();activateTab('autopilot');
+  }catch(err){setNotice('actionMessage',err.message,'error');}
+  finally{button.disabled=false;button.textContent=oldLabel;}
+});
+
+function autopilotDateInputValue(value){
+  const date=new Date(value||'');if(Number.isNaN(date.getTime()))return '';
+  return new Date(date.getTime()-date.getTimezoneOffset()*60000).toISOString().slice(0,16);
+}
+function autopilotStatusClass(status){return status==='scheduled'?'ok':status==='analysis_failed'?'warn':status==='analyzing'?'warn':'';}
+function updateAutopilotProgress(current,total,title,detail){
+  const percent=total?Math.min(100,current/total*100):0;$('autopilotProgress').classList.remove('hidden');
+  $('autopilotProgressTitle').textContent=title;$('autopilotProgressPercent').textContent=`${percent.toLocaleString('fr-FR',{maximumFractionDigits:0})} %`;
+  $('autopilotProgressBar').value=percent;$('autopilotProgressDetail').textContent=detail;
+}
+function hideAutopilotProgress(){$('autopilotProgress').classList.add('hidden');}
+
+async function loadAutopilotQueue({preserveNotice=false}={}){
+  const root=$('autopilotQueue');root.innerHTML='<p class="muted">Chargement de la file…</p>';if(!preserveNotice)hideNotice('autopilotNotice');
+  try{
+    const data=await api('/api/autopilot/queue');autopilotItems=data.items||[];
+    try{if(!localStorage.getItem('igstudio.autopilotFrequency'))$('autopilotPostsPerWeek').value=String(data.default_posts_per_week||3);}catch{}
+    const active=autopilotItems.filter(item=>item.status!=='scheduled').length;$('autopilotCount').textContent=active;
+    renderAutopilotQueue();
+  }catch(err){autopilotItems=[];$('autopilotCount').textContent='0';root.innerHTML='';setNotice('autopilotNotice',err.message,'error');}
+}
+function renderAutopilotQueue(){
+  const root=$('autopilotQueue');root.innerHTML='';
+  if(!autopilotItems.length){root.innerHTML='<div class="empty-state">Aucun contenu dans Auto-pilot. Prépare une publication puis clique sur « Mettre dans Auto-pilot ».</div>';return;}
+  for(const item of autopilotItems){
+    const card=document.createElement('article');card.className=`autopilot-card status-${item.status||'queued'}`;
+    card.innerHTML='<div class="autopilot-preview"></div><div class="autopilot-card-body"><div class="autopilot-card-heading"><div><strong class="title"></strong><p class="meta"></p></div><span class="pill status"></span></div><div class="autopilot-analysis hidden"><strong>Analyse visuelle</strong><p class="summary"></p><div class="tags"></div></div><div class="autopilot-proposal hidden"><label>Horaire proposé<input class="proposed-date" type="datetime-local"></label><p class="reason"></p></div><p class="error-text"></p><div class="autopilot-actions"></div></div>';
+    card.querySelector('.title').textContent=item.title||'Publication Instagram';
+    const typeLabel={reel:'Reel',photo:'Photo',carousel:'Carrousel',story:'Story'}[item.media_kind]||item.media_kind;
+    const options=[typeLabel,item.location,item.device,item.workflow==='manual_music'?'Musique à finaliser':null,item.mute_audio?'Son coupé':null].filter(Boolean);
+    card.querySelector('.meta').textContent=options.join(' • ');
+    const status=card.querySelector('.status');status.textContent=autopilotStatusLabels[item.status]||item.status||'Inconnu';const statusClass=autopilotStatusClass(item.status);if(statusClass)status.classList.add(statusClass);
+    const firstMedia=(item.media_items||[])[0];if(firstMedia?.url){
+      const preview=firstMedia.media_type==='image'?document.createElement('img'):document.createElement('video');preview.src=firstMedia.url;preview.alt=item.title||'Aperçu Auto-pilot';
+      if(preview.tagName==='VIDEO'){preview.controls=true;preview.muted=true;preview.playsInline=true;preview.preload='metadata';}
+      card.querySelector('.autopilot-preview').appendChild(preview);
+    }
+    if(item.visual_analysis){
+      const analysis=card.querySelector('.autopilot-analysis');analysis.classList.remove('hidden');analysis.querySelector('.summary').textContent=item.visual_analysis.summary||'Analyse terminée.';
+      const tags=analysis.querySelector('.tags');for(const value of (item.visual_analysis.tags||[]).slice(0,6)){const tag=document.createElement('span');tag.className='pill';tag.textContent=value;tags.appendChild(tag);}
+    }
+    if(item.proposal?.scheduled_for){
+      const proposal=card.querySelector('.autopilot-proposal');proposal.classList.remove('hidden');proposal.querySelector('.proposed-date').value=autopilotDateInputValue(item.proposal.scheduled_for);proposal.querySelector('.proposed-date').disabled=item.status==='scheduled';
+      proposal.querySelector('.reason').textContent=`${item.proposal.reason||'Créneau proposé.'}${item.proposal.confidence!==undefined?` • confiance ${item.proposal.confidence} %`:''}`;
+    }
+    if(item.last_error)card.querySelector('.error-text').textContent=item.last_error;
+    const actions=card.querySelector('.autopilot-actions');
+    if(['queued','analysis_failed'].includes(item.status)){
+      const analyze=document.createElement('button');analyze.className='secondary';analyze.type='button';analyze.textContent=item.status==='analysis_failed'?'Relancer l’analyse':'Analyser ce média';analyze.onclick=()=>analyzeSingleAutopilotItem(item,analyze);actions.appendChild(analyze);
+    }
+    if(item.status==='planned'){
+      const approve=document.createElement('button');approve.className='primary';approve.type='button';approve.textContent='Valider et programmer';approve.onclick=()=>approveAutopilotItem(item,card,approve);actions.appendChild(approve);
+    }
+    if(item.status==='scheduled'){
+      const calendar=document.createElement('button');calendar.className='secondary';calendar.type='button';calendar.textContent='Voir dans le calendrier';calendar.onclick=()=>activateTab('calendar');actions.appendChild(calendar);
+    }else{
+      const remove=document.createElement('button');remove.className='ghost';remove.type='button';remove.textContent='Retirer de la file';remove.onclick=()=>removeAutopilotItem(item);actions.appendChild(remove);
+    }
+    root.appendChild(card);
+  }
+}
+async function analyzeSingleAutopilotItem(item,button){
+  button.disabled=true;button.textContent='Extraction des images…';hideNotice('autopilotNotice');
+  try{await api(`/api/autopilot/queue/${item.id}/analyze`,{method:'POST'});await loadAutopilotQueue({preserveNotice:true});setNotice('autopilotNotice',`« ${item.title||'Média'} » analysé avec Groq Vision.`,'success');}
+  catch(err){await loadAutopilotQueue({preserveNotice:true});setNotice('autopilotNotice',err.message,'error');}
+}
+async function removeAutopilotItem(item){
+  if(!confirm(`Retirer « ${item.title||'ce contenu'} » de la file ? Le média restera dans la bibliothèque.`))return;
+  try{await api(`/api/autopilot/queue/${item.id}`,{method:'DELETE'});await loadAutopilotQueue();}
+  catch(err){setNotice('autopilotNotice',err.message,'error');}
+}
+async function approveAutopilotItem(item,card,button){
+  const value=card.querySelector('.proposed-date').value;if(!value){setNotice('autopilotNotice','Choisis une date et une heure.','error');return;}
+  if(!confirm(`Programmer « ${item.title||'cette publication'} » le ${new Date(value).toLocaleString('fr-FR')} ?`))return;
+  button.disabled=true;button.textContent='Programmation…';
+  try{await api(`/api/autopilot/queue/${item.id}/approve`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({scheduled_for:new Date(value).toISOString()})});playStudioChime();await loadAutopilotQueue({preserveNotice:true});setNotice('autopilotNotice','Publication validée et ajoutée au calendrier ✅','success');}
+  catch(err){setNotice('autopilotNotice',err.message,'error');button.disabled=false;button.textContent='Valider et programmer';}
+}
+async function analyzeAndPlanAutopilot(){
+  const button=$('autopilotAnalyzeBtn');button.disabled=true;button.textContent='Analyse en cours…';hideNotice('autopilotNotice');hideNotice('autopilotPlanSummary');
+  try{
+    await loadAutopilotQueue();const pending=autopilotItems.filter(item=>['queued','analysis_failed'].includes(item.status));const total=Math.max(1,pending.length+1);let completed=0,failures=[];
+    for(const item of pending){
+      updateAutopilotProgress(completed,total,'Analyse visuelle de la file',`${completed+1}/${pending.length} • ${item.title||'Publication'}`);
+      try{await api(`/api/autopilot/queue/${item.id}/analyze`,{method:'POST'});}catch(err){failures.push(`${item.title||'Média'} : ${err.message}`);}
+      completed+=1;updateAutopilotProgress(completed,total,'Analyse visuelle de la file',`${completed}/${pending.length} média(s) traité(s)`);
+    }
+    updateAutopilotProgress(completed,total,'Création du planning','Groq compare les médias aux meilleurs créneaux observés…');
+    const data=await api('/api/autopilot/plan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({posts_per_week:Number($('autopilotPostsPerWeek').value)||3,timezone:Intl.DateTimeFormat().resolvedOptions().timeZone||'Europe/Paris'})});
+    updateAutopilotProgress(total,total,'Planning terminé',`${data.plan.items.length} proposition(s) prête(s) à valider`);
+    await loadAutopilotQueue({preserveNotice:true});
+    setNotice('autopilotPlanSummary',data.plan.summary||'Planning Auto-pilot prêt.','success');
+    if(failures.length)setNotice('autopilotNotice',`${failures.length} média(s) non analysé(s) :\n${failures.join('\n')}`,'error');else setNotice('autopilotNotice','Analyse terminée. Vérifie puis valide chaque proposition.','success');
+  }catch(err){setNotice('autopilotNotice',err.message,'error');}
+  finally{button.disabled=false;button.textContent='✨ Analyser et proposer les horaires';setTimeout(hideAutopilotProgress,1200);}
+}
+$('autopilotAnalyzeBtn').addEventListener('click',analyzeAndPlanAutopilot);
+$('refreshAutopilot').addEventListener('click',loadAutopilotQueue);
+$('autopilotPostsPerWeek').addEventListener('change',()=>{try{localStorage.setItem('igstudio.autopilotFrequency',$('autopilotPostsPerWeek').value);}catch{}});
+try{const savedAutopilotFrequency=localStorage.getItem('igstudio.autopilotFrequency');if(['1','2','3','4','5','6','7'].includes(savedAutopilotFrequency))$('autopilotPostsPerWeek').value=savedAutopilotFrequency;}catch{}
 
 async function loadPublishingLimit(){
   const target=$('publishingLimit');target.textContent='Chargement…';

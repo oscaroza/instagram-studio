@@ -554,6 +554,27 @@ def test_phase_two_organization_controls_are_available():
     assert "/schedule" in script.text
 
 
+def test_autopilot_controls_are_available_without_replacing_existing_actions():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert 'data-tab="autopilot"' in page.text
+    assert 'id="autopilot"' in page.text
+    assert 'id="autopilotQueueBtn"' in page.text
+    assert 'id="autopilotAnalyzeBtn"' in page.text
+    assert 'id="saveDraftBtn"' in page.text
+    assert 'id="publishBtn"' in page.text
+    assert "/api/autopilot/queue" in script.text
+    assert "/api/autopilot/plan" in script.text
+
+
 def test_upload_stays_temporary_even_when_v2_storage_is_configured():
     with temporary_settings(
         studio_access_code="test-only-code",
