@@ -217,8 +217,8 @@ class Settings:
     )
 
     autopilot_frame_count: int = min(
-        5,
-        max(1, int(os.getenv("AUTOPILOT_FRAME_COUNT", "5"))),
+        3,
+        max(1, int(os.getenv("AUTOPILOT_FRAME_COUNT", "3"))),
     )
 
     autopilot_default_posts_per_week: int = min(

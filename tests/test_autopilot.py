@@ -1,7 +1,12 @@
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
+from app.config import settings
 from app.services.autopilot import autopilot_candidate_slots
+
+
+def test_autopilot_never_exceeds_groq_vision_image_limit():
+    assert 1 <= settings.autopilot_frame_count <= 3
 
 
 def test_autopilot_candidate_slots_respect_frequency_and_existing_schedule():

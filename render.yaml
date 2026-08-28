@@ -26,7 +26,7 @@ services:
       - key: CEREBRAS_BASE_URL
         value: https://api.groq.com/openai/v1
       - key: AUTOPILOT_FRAME_COUNT
-        value: 5
+        value: 3
       - key: AUTOPILOT_DEFAULT_POSTS_PER_WEEK
         value: 3
       - key: INSTAGRAM_API_BASE

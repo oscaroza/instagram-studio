@@ -18,7 +18,7 @@ Studio personnel FastAPI pour préparer, programmer et publier des Reels, photos
 - dashboard statistique avec comparaison sur 7, 30 ou 90 jours et courbe d’évolution fondée sur les relevés MongoDB ;
 - assistant Groq conversationnel dont l’historique reste dans MongoDB et n’est pas renvoyé automatiquement à Groq ;
 - générateur Groq de trois protocoles vidéo orientés croissance, fondés sur les statistiques anonymisées et un brief matériel/contraintes, avec sauvegarde du dernier plan dans MongoDB ;
-- file Auto-pilot avec analyse visuelle de cinq images représentatives maximum, proposition de créneaux fondée sur les statistiques et validation humaine obligatoire avant chaque programmation ;
+- file Auto-pilot avec analyse visuelle de trois images représentatives maximum, proposition de créneaux fondée sur les statistiques et validation humaine obligatoire avant chaque programmation ;
 - connexion Face ID, Touch ID ou passkey WebAuthn, avec le code d’accès conservé comme secours ;
 - token Instagram longue durée chiffré dans MongoDB et rafraîchi automatiquement ;
 - vérification avant envoi et protection de 15 minutes contre une double publication identique.
@@ -57,8 +57,8 @@ CEREBRAS_API_KEY=TA_CLE_GROQ
 CEREBRAS_BASE_URL=https://api.groq.com/openai/v1
 CEREBRAS_MODEL=openai/gpt-oss-20b
 CEREBRAS_VISION_MODEL=qwen/qwen3.6-27b
-# Facultatif : 5 images maximum et 3 publications par semaine par défaut
-AUTOPILOT_FRAME_COUNT=5
+# Facultatif : 3 images maximum et 3 publications par semaine par défaut
+AUTOPILOT_FRAME_COUNT=3
 AUTOPILOT_DEFAULT_POSTS_PER_WEEK=3
 ENABLE_INSTAGRAM_STORIES=true
 
