@@ -20,6 +20,11 @@ let imageEditorObjectUrl = '';
 let imageEditorState = null;
 let imageEditorSelectedLayerId = '';
 let imageEditorDrag = null;
+let imageEditorPanDrag = null;
+let imageEditorZoomLevel = 1;
+let imageEditorPan = {x:0,y:0};
+let imageEditorPinch = null;
+const imageEditorPointers = new Map();
 let libraryItems = [];
 let analyticsPosts = [];
 let autopilotItems = [];
@@ -332,6 +337,35 @@ function imageEditorCleanState(raw){
   const layers=Array.isArray(raw?.layers)?raw.layers.slice(0,IMAGE_EDITOR_MAX_LAYERS).map(imageEditorCleanLayer):[];
   return {version:1,layers};
 }
+function imageEditorClampZoom(value){return Math.max(.25,Math.min(4,Number(value)||1));}
+function imageEditorFitCanvasBox(){
+  const canvas=$('imageEditorCanvas'),stage=$('imageEditorStage');if(!canvas.width||!canvas.height||!stage.clientWidth||!stage.clientHeight)return;
+  const styles=getComputedStyle(stage),availableWidth=Math.max(80,stage.clientWidth-parseFloat(styles.paddingLeft)-parseFloat(styles.paddingRight)),availableHeight=Math.max(80,stage.clientHeight-parseFloat(styles.paddingTop)-parseFloat(styles.paddingBottom)),fit=Math.min(availableWidth/canvas.width,availableHeight/canvas.height);
+  canvas.style.width=`${Math.max(1,canvas.width*fit)}px`;canvas.style.height=`${Math.max(1,canvas.height*fit)}px`;
+}
+function imageEditorClampPan(){
+  const canvas=$('imageEditorCanvas'),stage=$('imageEditorStage');
+  if(imageEditorZoomLevel<=1){imageEditorPan={x:0,y:0};return;}
+  const maxX=Math.max(0,(canvas.offsetWidth*imageEditorZoomLevel-stage.clientWidth)/2),maxY=Math.max(0,(canvas.offsetHeight*imageEditorZoomLevel-stage.clientHeight)/2);
+  imageEditorPan.x=Math.max(-maxX,Math.min(maxX,imageEditorPan.x));imageEditorPan.y=Math.max(-maxY,Math.min(maxY,imageEditorPan.y));
+}
+function imageEditorApplyViewport(){
+  const canvas=$('imageEditorCanvas');imageEditorClampPan();
+  canvas.style.transform=`translate3d(${imageEditorPan.x}px,${imageEditorPan.y}px,0) scale(${imageEditorZoomLevel})`;
+  $('imageEditorZoom').value=Math.round(imageEditorZoomLevel*100);$('imageEditorZoomValue').textContent=`${Math.round(imageEditorZoomLevel*100)} %`;
+  $('imageEditorStage').classList.toggle('can-pan',imageEditorZoomLevel>1);
+}
+function imageEditorResetViewport(){imageEditorZoomLevel=1;imageEditorPan={x:0,y:0};imageEditorApplyViewport();}
+function imageEditorSetZoom(value,anchor=null){
+  const previous=imageEditorZoomLevel,next=imageEditorClampZoom(value);if(next===previous)return;
+  if(anchor){
+    const bounds=$('imageEditorStage').getBoundingClientRect(),centerX=bounds.left+bounds.width/2,centerY=bounds.top+bounds.height/2,factor=next/previous;
+    imageEditorPan.x=(anchor.x-centerX)-(anchor.x-centerX-imageEditorPan.x)*factor;imageEditorPan.y=(anchor.y-centerY)-(anchor.y-centerY-imageEditorPan.y)*factor;
+  }
+  imageEditorZoomLevel=next;imageEditorApplyViewport();
+}
+function imageEditorPointerDistance(first,second){return Math.hypot(second.x-first.x,second.y-first.y);}
+function imageEditorPointerCenter(first,second){return {x:(first.x+second.x)/2,y:(first.y+second.y)/2};}
 function selectedImageEditorLayer(){return imageEditorState?.layers.find(layer=>layer.id===imageEditorSelectedLayerId)||null;}
 function imageEditorSetNotice(message,type=''){
   if(!message){hideNotice('imageEditorNotice');return;}
@@ -397,12 +431,13 @@ function addImageEditorLayer(copy=null){
   imageEditorState.layers.push(layer);imageEditorSelectedLayerId=layer.id;imageEditorSyncControls();drawImageEditor();$('imageEditorText').focus();
 }
 function closeImageTextEditor(){
-  $('imageTextEditor').classList.add('hidden');document.body.classList.remove('image-editor-open');imageEditorDrag=null;imageEditorImage=null;imageEditorState=null;imageEditorItemIndex=-1;
+  $('imageTextEditor').classList.add('hidden');document.body.classList.remove('image-editor-open');imageEditorDrag=null;imageEditorPanDrag=null;imageEditorPinch=null;imageEditorPointers.clear();imageEditorImage=null;imageEditorState=null;imageEditorItemIndex=-1;imageEditorResetViewport();
   if(imageEditorObjectUrl){URL.revokeObjectURL(imageEditorObjectUrl);imageEditorObjectUrl='';}
 }
 async function openImageTextEditor(index){
   const item=selectedMediaItems[index];if(!item||item.media_type!=='image')return;
   imageEditorItemIndex=index;imageEditorState=imageEditorCleanState(item.text_editor);imageEditorSelectedLayerId=imageEditorState.layers.at(-1)?.id||'';
+  imageEditorResetViewport();
   $('restoreOriginalImageBtn').disabled=!item.original_url;
   $('imageTextEditor').classList.remove('hidden');document.body.classList.add('image-editor-open');$('imageEditorEmpty').classList.remove('hidden');$('imageEditorCanvas').classList.add('hidden');imageEditorSetNotice('');
   try{
@@ -413,7 +448,7 @@ async function openImageTextEditor(index){
     await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error('Format d’image non lisible.'));image.src=imageEditorObjectUrl;});
     imageEditorImage=image;const maxEdge=2160,ratio=Math.min(1,maxEdge/Math.max(image.naturalWidth,image.naturalHeight)),canvas=$('imageEditorCanvas');
     canvas.width=Math.max(1,Math.round(image.naturalWidth*ratio));canvas.height=Math.max(1,Math.round(image.naturalHeight*ratio));
-    $('imageEditorEmpty').classList.add('hidden');canvas.classList.remove('hidden');if(!imageEditorState.layers.length)addImageEditorLayer();else{imageEditorSyncControls();drawImageEditor();}
+    $('imageEditorEmpty').classList.add('hidden');canvas.classList.remove('hidden');imageEditorFitCanvasBox();imageEditorResetViewport();if(!imageEditorState.layers.length)addImageEditorLayer();else{imageEditorSyncControls();drawImageEditor();}
   }catch(error){imageEditorSetNotice(`Impossible de charger cette image dans l’éditeur : ${error.message}`,'error');}
 }
 async function saveImageTextEditor(){
@@ -446,9 +481,32 @@ for(const id of ['imageEditorText','imageEditorFont','imageEditorAlign','imageEd
 $('addTextLayerBtn').onclick=()=>addImageEditorLayer();$('duplicateTextLayerBtn').onclick=()=>{const layer=selectedImageEditorLayer();if(layer)addImageEditorLayer(layer);};
 $('deleteTextLayerBtn').onclick=()=>{if(!imageEditorSelectedLayerId)return;imageEditorState.layers=imageEditorState.layers.filter(layer=>layer.id!==imageEditorSelectedLayerId);imageEditorSelectedLayerId=imageEditorState.layers.at(-1)?.id||'';imageEditorSyncControls();drawImageEditor();};
 $('closeImageEditorBtn').onclick=closeImageTextEditor;$('cancelImageEditorBtn').onclick=closeImageTextEditor;$('saveImageEditorBtn').onclick=saveImageTextEditor;$('restoreOriginalImageBtn').onclick=restoreOriginalImage;
-$('imageEditorCanvas').addEventListener('pointerdown',event=>{const point=imageEditorPoint(event),layer=imageEditorHitLayer(point);imageEditorSelectedLayerId=layer?.id||'';imageEditorSyncControls();drawImageEditor();if(!layer)return;imageEditorDrag={id:layer.id,offsetX:point.x-layer.x*$('imageEditorCanvas').width,offsetY:point.y-layer.y*$('imageEditorCanvas').height};event.currentTarget.setPointerCapture?.(event.pointerId);event.preventDefault();});
-$('imageEditorCanvas').addEventListener('pointermove',event=>{if(!imageEditorDrag)return;const layer=selectedImageEditorLayer();if(!layer)return;const point=imageEditorPoint(event),canvas=$('imageEditorCanvas');layer.x=Math.max(0,Math.min(1,(point.x-imageEditorDrag.offsetX)/canvas.width));layer.y=Math.max(0,Math.min(1,(point.y-imageEditorDrag.offsetY)/canvas.height));drawImageEditor();event.preventDefault();});
-for(const eventName of ['pointerup','pointercancel'])$('imageEditorCanvas').addEventListener(eventName,()=>{imageEditorDrag=null;});
+const imageEditorCanvas=$('imageEditorCanvas');
+imageEditorCanvas.addEventListener('pointerdown',event=>{
+  imageEditorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});event.currentTarget.setPointerCapture?.(event.pointerId);
+  if(imageEditorPointers.size>=2){
+    const [first,second]=[...imageEditorPointers.values()].slice(0,2);imageEditorPinch={distance:Math.max(1,imageEditorPointerDistance(first,second)),center:imageEditorPointerCenter(first,second),zoom:imageEditorZoomLevel,pan:{...imageEditorPan}};imageEditorDrag=null;imageEditorPanDrag=null;event.preventDefault();return;
+  }
+  const point=imageEditorPoint(event),layer=imageEditorHitLayer(point);imageEditorSelectedLayerId=layer?.id||'';imageEditorSyncControls();drawImageEditor();
+  if(layer)imageEditorDrag={id:layer.id,offsetX:point.x-layer.x*imageEditorCanvas.width,offsetY:point.y-layer.y*imageEditorCanvas.height};
+  else if(imageEditorZoomLevel>1)imageEditorPanDrag={clientX:event.clientX,clientY:event.clientY,pan:{...imageEditorPan}};
+  event.preventDefault();
+});
+imageEditorCanvas.addEventListener('pointermove',event=>{
+  if(!imageEditorPointers.has(event.pointerId))return;imageEditorPointers.set(event.pointerId,{x:event.clientX,y:event.clientY});
+  if(imageEditorPinch&&imageEditorPointers.size>=2){
+    const [first,second]=[...imageEditorPointers.values()].slice(0,2),center=imageEditorPointerCenter(first,second),next=imageEditorClampZoom(imageEditorPinch.zoom*imageEditorPointerDistance(first,second)/imageEditorPinch.distance),stageBounds=$('imageEditorStage').getBoundingClientRect(),stageCenter={x:stageBounds.left+stageBounds.width/2,y:stageBounds.top+stageBounds.height/2},factor=next/imageEditorPinch.zoom;
+    imageEditorZoomLevel=next;imageEditorPan.x=(center.x-stageCenter.x)-(imageEditorPinch.center.x-stageCenter.x-imageEditorPinch.pan.x)*factor;imageEditorPan.y=(center.y-stageCenter.y)-(imageEditorPinch.center.y-stageCenter.y-imageEditorPinch.pan.y)*factor;imageEditorApplyViewport();event.preventDefault();return;
+  }
+  if(imageEditorDrag){const layer=selectedImageEditorLayer();if(layer){const point=imageEditorPoint(event);layer.x=Math.max(0,Math.min(1,(point.x-imageEditorDrag.offsetX)/imageEditorCanvas.width));layer.y=Math.max(0,Math.min(1,(point.y-imageEditorDrag.offsetY)/imageEditorCanvas.height));drawImageEditor();}}
+  else if(imageEditorPanDrag){imageEditorPan.x=imageEditorPanDrag.pan.x+event.clientX-imageEditorPanDrag.clientX;imageEditorPan.y=imageEditorPanDrag.pan.y+event.clientY-imageEditorPanDrag.clientY;imageEditorApplyViewport();}
+  event.preventDefault();
+});
+for(const eventName of ['pointerup','pointercancel'])imageEditorCanvas.addEventListener(eventName,event=>{imageEditorPointers.delete(event.pointerId);imageEditorDrag=null;imageEditorPanDrag=null;if(imageEditorPointers.size<2)imageEditorPinch=null;});
+imageEditorCanvas.addEventListener('wheel',event=>{event.preventDefault();imageEditorSetZoom(imageEditorZoomLevel*(event.deltaY<0?1.12:1/1.12),{x:event.clientX,y:event.clientY});},{passive:false});
+$('imageEditorZoom').addEventListener('input',event=>imageEditorSetZoom(Number(event.currentTarget.value)/100));
+$('imageEditorZoomOut').onclick=()=>imageEditorSetZoom(imageEditorZoomLevel-.25);$('imageEditorZoomIn').onclick=()=>imageEditorSetZoom(imageEditorZoomLevel+.25);$('imageEditorZoomFit').onclick=imageEditorResetViewport;
+window.addEventListener('resize',()=>{if(!$('imageTextEditor').classList.contains('hidden')){imageEditorFitCanvasBox();imageEditorApplyViewport();}});
 document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!$('imageTextEditor').classList.contains('hidden'))closeImageTextEditor();});
 function isCarouselMode(kind=$('mediaKind').value){
   return kind==='carousel'||kind==='carousel_video';

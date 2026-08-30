@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=33">
+  <link rel="stylesheet" href="/static/styles.css?v=34">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}" data-max-upload-mb="{{ max_upload_mb }}" data-density="{{ appearance.density }}" style="--bg:{{ appearance.background }};--surface:{{ appearance.surface }};--text:{{ appearance.text }};--accent:{{ appearance.accent }};--accent2:{{ appearance.accent }};--accent-contrast:{{ appearance.accent_text }};--card-radius:{{ appearance.radius }}px">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -654,6 +654,15 @@
         <div class="image-editor-stage" id="imageEditorStage">
           <canvas id="imageEditorCanvas" aria-label="Image à modifier"></canvas>
           <p id="imageEditorEmpty" class="muted hidden">Chargement de l’image…</p>
+          <div class="image-editor-zoom" aria-label="Contrôles de zoom">
+            <button id="imageEditorZoomOut" class="ghost" type="button" aria-label="Dézoomer">−</button>
+            <label>
+              <span id="imageEditorZoomValue">100 %</span>
+              <input id="imageEditorZoom" type="range" min="25" max="400" step="5" value="100" aria-label="Zoom de l’image">
+            </label>
+            <button id="imageEditorZoomIn" class="ghost" type="button" aria-label="Zoomer">+</button>
+            <button id="imageEditorZoomFit" class="ghost" type="button">Ajuster</button>
+          </div>
         </div>
         <aside class="image-editor-controls">
           <div class="image-editor-toolbar">
@@ -730,6 +739,6 @@
   </div>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=42"></script>
+  <script src="/static/app.js?v=43"></script>
 </body>
 </html>
