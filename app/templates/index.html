@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=30">
+  <link rel="stylesheet" href="/static/styles.css?v=31">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}" data-max-upload-mb="{{ max_upload_mb }}" data-density="{{ appearance.density }}" style="--bg:{{ appearance.background }};--surface:{{ appearance.surface }};--text:{{ appearance.text }};--accent:{{ appearance.accent }};--accent2:{{ appearance.accent }};--accent-contrast:{{ appearance.accent_text }};--card-radius:{{ appearance.radius }}px">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -257,7 +257,7 @@
         <div class="row-between stats-dashboard-header">
           <div>
             <h2>Dashboard V3</h2>
-            <p class="muted">Performances de tes anciennes publications, enregistrées dans MongoDB.</p>
+            <p class="muted">Chiffres globaux officiels du compte Meta, complétés par l’analyse détaillée de chaque publication.</p>
           </div>
           <div class="stats-dashboard-actions">
             <label>Comparer sur
@@ -280,19 +280,38 @@
           <small id="statsSyncProgressDetail">Connexion à Instagram…</small>
         </div>
         <div id="statsNotice" class="notice hidden"></div>
+        <p id="statsOfficialMeta" class="muted small">Synchronise pour récupérer les compteurs officiels Meta.</p>
+        <div class="stats-kpis stats-official-kpis">
+          <article><span>Publications du profil</span><strong id="statsProfileMediaCount">—</strong><small id="statsAnalyzedCount">0 média analysé</small></article>
+          <article><span>Followers actuels</span><strong id="statsFollowers">—</strong><small id="statsFollowing">— abonnement</small></article>
+          <article><span>Vues de la période</span><strong id="statsViews">—</strong><small id="statsViewsHelp">Source Meta globale</small></article>
+          <article><span>Portée globale</span><strong id="statsReach">—</strong><small id="statsReachHelp">Comptes uniques selon Meta</small></article>
+          <article><span>Interactions</span><strong id="statsInteractions">—</strong><small id="statsEngagement">—</small></article>
+          <article><span>Followers nets</span><strong id="statsNetFollowers">—</strong><small id="statsFollowerMovement">Gains et pertes indisponibles</small></article>
+        </div>
+        <div id="statsAccountDetails" class="stats-account-details"></div>
+      </div>
+      <div class="card result-card stats-media-analysis-card">
+        <div class="row-between">
+          <div>
+            <h2>Analyse détaillée des publications</h2>
+            <p class="muted small">Statistiques actuelles par contenu, utiles pour les hooks, formats, classements et recommandations.</p>
+          </div>
+          <span class="pill">Données par média</span>
+        </div>
         <div class="stats-kpis">
-          <article><span>Publications</span><strong id="statsMediaCount">0</strong><small id="statsMediaKinds">—</small></article>
-          <article><span>Vues</span><strong id="statsViews">0</strong><small>Total disponible</small></article>
-          <article><span>Portée</span><strong id="statsReach">0</strong><small>Comptes touchés</small></article>
-          <article><span>Engagement</span><strong id="statsEngagement">0 %</strong><small id="statsInteractions">0 interaction</small></article>
+          <article><span>Médias analysés</span><strong id="statsMediaCount">0</strong><small id="statsMediaKinds">—</small></article>
+          <article><span>Vues cumulées</span><strong id="statsMediaViews">0</strong><small>Somme actuelle des contenus</small></article>
+          <article><span>Portées additionnées</span><strong id="statsMediaReach">0</strong><small>Une personne peut compter plusieurs fois</small></article>
+          <article><span>Taux calculé</span><strong id="statsMediaEngagement">0 %</strong><small id="statsMediaInteractions">0 interaction</small></article>
         </div>
       </div>
       <div class="grid two stats-columns stats-phase-three result-card">
         <div class="card">
-          <h2>Comparaison par période</h2>
+          <h2>Comparaison des contenus sortis par période</h2>
           <p id="statsPeriodDates" class="muted small">Période actuelle comparée à la période précédente.</p>
           <div id="statsComparison" class="stats-comparison-grid"><p class="muted">Aucune donnée comparable.</p></div>
-          <p class="muted small stats-method-note">Les chiffres correspondent aux performances actuelles des publications sorties pendant chaque période.</p>
+          <p class="muted small stats-method-note">Cette comparaison par cohorte est volontairement séparée des chiffres globaux Meta : elle compare les performances actuelles des publications sorties pendant chaque période.</p>
         </div>
         <div class="card">
           <h2>Courbe d’évolution</h2>
@@ -620,6 +639,6 @@
   </main>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=39"></script>
+  <script src="/static/app.js?v=40"></script>
 </body>
 </html>

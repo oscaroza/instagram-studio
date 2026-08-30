@@ -517,6 +517,12 @@ def test_v3_stats_dashboard_is_rendered_without_removing_settings():
     assert 'id="statsPeriod"' in page.text
     assert 'id="statsComparison"' in page.text
     assert 'id="statsGrowthChart"' in page.text
+    assert 'id="statsProfileMediaCount"' in page.text
+    assert 'id="statsReachHelp"' in page.text
+    assert 'id="statsAnalyzedCount"' in page.text
+    assert 'id="statsNetFollowers"' in page.text
+    assert 'id="statsAccountDetails"' in page.text
+    assert 'id="statsMediaViews"' in page.text
     assert 'data-tab="settings"' in page.text
     assert 'id="settings"' in page.text
     assert 'id="r2UsageCard"' in page.text

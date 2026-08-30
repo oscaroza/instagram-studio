@@ -178,6 +178,15 @@ Le code d’accès reste volontairement disponible comme secours. Une passkey re
 
 Dans **Stats → Assistant Groq**, les questions sont enregistrées avec les réponses dans MongoDB pendant 90 jours et peuvent être effacées à tout moment. Chaque requête envoie à Groq uniquement la question actuelle et les statistiques agrégées/anonymisées ; les captions, hooks complets, vidéos, URL, tokens et anciennes conversations ne sont pas envoyés.
 
+## Exactitude des statistiques Instagram
+
+Le dashboard sépare deux sources qui ne doivent pas être confondues :
+
+- **Chiffres officiels du compte** : total des publications, followers et abonnements du profil, ainsi que vues, interactions et mouvements de followers sur la période choisie. Ces valeurs viennent des Insights globaux Meta.
+- **Analyse détaillée des publications** : médias que l’API a effectivement pu parcourir avec leurs compteurs actuels. Elle sert aux classements, hooks, formats et recommandations, mais son nombre peut être inférieur au total affiché sur le profil.
+
+Sur 90 jours, les compteurs additifs sont calculés avec trois fenêtres Meta de 30 jours. La portée et les comptes engagés uniques ne sont volontairement pas additionnés sur ces trois fenêtres, car une même personne pourrait être comptée plusieurs fois. Leur valeur exacte reste disponible dans les vues 7 et 30 jours. Les chiffres Instagram peuvent également avoir un délai de mise à jour côté Meta.
+
 ## Programmation
 
 Le planificateur tourne dans le même service Render et vérifie les publications toutes les 30 secondes. UptimeRobot peut appeler `/health` régulièrement pour éviter la veille du service. Les tâches sont réclamées de façon atomique dans MongoDB afin d’éviter une double publication, et une tâche interrompue est remise en file après 15 minutes.

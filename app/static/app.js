@@ -1124,6 +1124,7 @@ document.querySelectorAll('[data-calendar-view]').forEach(button=>button.addEven
 document.querySelectorAll('[data-calendar-list-range]').forEach(button=>button.addEventListener('click',()=>{calendarListRange=button.dataset.calendarListRange;resetCalendarCursor();try{localStorage.setItem('igstudio.calendarListRange',calendarListRange);}catch{}loadCalendar();}));
 
 function formatStat(value){return new Intl.NumberFormat('fr-FR',{notation:Number(value)>=10000?'compact':'standard',maximumFractionDigits:1}).format(Number(value)||0);}
+function formatOptionalStat(value,available=true){return available&&value!==null&&value!==undefined?formatStat(value):'—';}
 function statsPeriodValue(){return Number($('statsPeriod').value)||30;}
 function statsDate(value){
   const date=new Date(value||'');
@@ -1316,15 +1317,43 @@ function renderContentIdeas(report,createdAt='',savedBrief=''){
 }
 function renderAnalytics(data){
   const summary=data.summary||{};
+  const account=data.account||{},profile=account.profile||{},period=account.period||{},accountMetrics=period.metrics||{};
+  const available=new Set(Array.isArray(period.available_metrics)?period.available_metrics:[]);
+  const exact=new Set(Array.isArray(period.exact_metrics)?period.exact_metrics:period.available_metrics||[]);
+  const metric=(name)=>formatOptionalStat(accountMetrics[name],available.has(name)&&exact.has(name));
+  $('statsProfileMediaCount').textContent=formatOptionalStat(profile.media_count,profile.media_count!==null&&profile.media_count!==undefined);
+  $('statsFollowers').textContent=formatOptionalStat(profile.followers_count,profile.followers_count!==null&&profile.followers_count!==undefined);
+  $('statsFollowing').textContent=profile.follows_count===null||profile.follows_count===undefined?'Abonnements indisponibles':`${formatStat(profile.follows_count)} abonnement(s)`;
+  $('statsAnalyzedCount').textContent=`${formatStat(summary.media_count)} média(s) analysé(s)`;
+  $('statsViews').textContent=metric('views');
+  $('statsReach').textContent=metric('reach');
+  $('statsInteractions').textContent=metric('total_interactions');
+  $('statsEngagement').textContent=exact.has('total_interactions')&&(exact.has('reach')||exact.has('views'))?`Interactions / ${exact.has('reach')?'portée':'vues'} : ${Number(period.engagement_rate||0).toFixed(1)} %`:'Taux indisponible';
+  $('statsNetFollowers').textContent=metric('net_follows');
+  $('statsNetFollowers').classList.toggle('negative',available.has('net_follows')&&Number(accountMetrics.net_follows)<0);
+  $('statsNetFollowers').classList.toggle('positive',available.has('net_follows')&&Number(accountMetrics.net_follows)>0);
+  $('statsFollowerMovement').textContent=available.has('follows')&&available.has('unfollows')?`+${formatStat(accountMetrics.follows)} • −${formatStat(accountMetrics.unfollows)}`:'Gains et pertes indisponibles';
+  $('statsViewsHelp').textContent=Number(period.chunk_count)>1?`Somme exacte de ${period.chunk_count} fenêtres Meta`:`Source Meta globale • ${period.days||statsPeriodValue()} jours`;
+  $('statsReachHelp').textContent=exact.has('reach')?'Comptes uniques selon Meta':'Indisponible exactement sur cette période — utilise 30 jours';
+  const accountNotes=Array.isArray(period.notes)?period.notes:[];
+  $('statsOfficialMeta').textContent=period.start&&period.end?`Compte @${profile.username||'Instagram'} • chiffres Meta du ${statsDate(period.display_start||period.start)} au ${statsDate(period.display_end||period.end)}${(period.errors||[]).length?' • certaines métriques sont indisponibles':''}${accountNotes.length?` • ${accountNotes.join(' ')}`:''}`:`Compte @${profile.username||'Instagram'} • synchronise pour charger les Insights globaux officiels.`;
+  const details=$('statsAccountDetails');details.innerHTML='';
+  const detailMetrics=[['Comptes engagés','accounts_engaged'],["J’aime",'likes'],['Commentaires','comments'],['Partages','shares'],['Enregistrements','saves'],['Réponses','replies']];
+  for(const [label,key] of detailMetrics){
+    if(!available.has(key)||!exact.has(key))continue;
+    const item=document.createElement('article');item.innerHTML='<span></span><strong></strong>';item.querySelector('span').textContent=label;item.querySelector('strong').textContent=formatStat(accountMetrics[key]);details.appendChild(item);
+  }
+  if(!details.children.length)details.innerHTML='<p class="muted small">Les statistiques détaillées du compte apparaîtront après la prochaine synchronisation.</p>';
   $('statsMediaCount').textContent=formatStat(summary.media_count);
   $('statsMediaKinds').textContent=`${summary.reels||0} Reel(s) • ${summary.photos||0} photo(s) • ${summary.carousels||0} carrousel(s)`;
-  $('statsViews').textContent=formatStat(summary.views);
-  $('statsReach').textContent=formatStat(summary.reach);
-  $('statsEngagement').textContent=`${Number(summary.engagement_rate||0).toFixed(1)} %`;
-  $('statsInteractions').textContent=`${formatStat(summary.interactions)} interaction(s)`;
+  $('statsMediaViews').textContent=formatStat(summary.views);
+  $('statsMediaReach').textContent=formatStat(summary.reach);
+  $('statsMediaEngagement').textContent=`${Number(summary.engagement_rate||0).toFixed(1)} %`;
+  $('statsMediaInteractions').textContent=`${formatStat(summary.interactions)} interaction(s)`;
   const sync=data.sync||{};
-  $('statsSyncMeta').textContent=sync.last_synced_at?`Dernier relevé : ${new Date(sync.last_synced_at).toLocaleString('fr-FR')} • ${sync.metrics_updated||0} publication(s) mise(s) à jour`:'Aucune synchronisation enregistrée.';
+  $('statsSyncMeta').textContent=sync.last_synced_at?`Dernier relevé : ${new Date(sync.last_synced_at).toLocaleString('fr-FR')} • ${sync.metrics_updated||0} média(s) détaillé(s) mis à jour • ${profile.media_count??'—'} publication(s) sur le profil`:'Aucune synchronisation enregistrée.';
   if(sync.permission_required&&sync.last_error)setNotice('statsNotice',sync.last_error,'error');
+  else if(sync.last_synced_at&&!available.size)setNotice('statsNotice','Les médias ont été synchronisés, mais Meta n’a pas renvoyé les Insights globaux du compte. Vérifie la permission instagram_business_manage_insights puis reconnecte Instagram.','warning');
   renderPeriodComparison(data.period_comparison||{});
   renderGrowthChart(data.growth_series||[]);
 

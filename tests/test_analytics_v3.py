@@ -1,6 +1,6 @@
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.services import analytics, cerebras, instagram
 
@@ -27,10 +27,10 @@ class FakeCollection:
 
 
 class FakeDatabase:
-    def __init__(self, media, snapshots=None):
+    def __init__(self, media, snapshots=None, state=None):
         self.instagram_media = FakeCollection(media)
         self.instagram_insight_snapshots = FakeCollection(snapshots or [])
-        self.analytics_state = FakeCollection([])
+        self.analytics_state = FakeCollection(state or [])
         self.analytics_reports = FakeCollection([])
 
 
@@ -131,9 +131,94 @@ def test_insight_payload_is_normalized_from_values_and_totals():
     assert result == {"views": 1200, "reach": 800}
 
 
+def test_account_insights_and_follow_breakdown_are_normalized():
+    metrics = analytics.normalize_account_insights(
+        {
+            "data": [
+                {"name": "views", "total_value": {"value": 16444}},
+                {"name": "reach", "total_value": {"value": 7364}},
+                {"name": "total_interactions", "total_value": {"value": 797}},
+            ]
+        }
+    )
+    followers = analytics.normalize_follow_breakdown(
+        {
+            "data": [
+                {
+                    "name": "follows_and_unfollows",
+                    "total_value": {
+                        "breakdowns": [
+                            {
+                                "dimension_keys": ["follow_type"],
+                                "results": [
+                                    {"dimension_values": ["FOLLOWER"], "value": 20},
+                                    {"dimension_values": ["NON_FOLLOWER"], "value": 29},
+                                ],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    )
+
+    assert metrics == {"views": 16444, "reach": 7364, "total_interactions": 797}
+    assert followers == {"follows": 20, "unfollows": 29, "net_follows": -9}
+
+
+def test_ninety_day_account_insights_sum_only_additive_metrics(monkeypatch):
+    calls = []
+
+    async def window(**kwargs):
+        calls.append((kwargs["start"], kwargs["end"]))
+        return {
+            "metrics": {
+                "views": 1000,
+                "reach": 800,
+                "accounts_engaged": 100,
+                "total_interactions": 50,
+                "follows": 7,
+                "unfollows": 3,
+            },
+            "errors": [],
+        }
+
+    monkeypatch.setattr(analytics, "_fetch_account_window_insights", window)
+    now = datetime(2026, 8, 30, 12, tzinfo=timezone.utc)
+    result = asyncio.run(
+        analytics.fetch_account_period_insights(
+            user_id="instagram-user",
+            access_token="instagram-token",
+            days=90,
+            client=None,
+            now=now,
+        )
+    )
+
+    assert len(calls) == 3
+    assert all(end - start == timedelta(days=30) for start, end in calls)
+    assert result["metrics"]["views"] == 3000
+    assert result["metrics"]["total_interactions"] == 150
+    assert result["metrics"]["follows"] == 21
+    assert result["metrics"]["unfollows"] == 9
+    assert result["metrics"]["net_follows"] == 12
+    assert "reach" not in result["metrics"]
+    assert "accounts_engaged" not in result["metrics"]
+    assert "reach" in result["unavailable_metrics"]
+    assert result["chunk_count"] == 3
+    assert result["display_start"] == "2026-06-01"
+    assert result["display_end"] == "2026-08-29"
+
+
 def test_instagram_sync_reports_real_progress(monkeypatch):
+    saved_state = {}
+
     class AnalyticsState:
-        def update_one(self, *args, **kwargs):
+        def find_one(self, query):
+            return None
+
+        def update_one(self, query, update, **kwargs):
+            saved_state.update(update.get("$set") or {})
             return None
 
     class SyncDatabase:
@@ -148,11 +233,27 @@ def test_instagram_sync_reports_real_progress(monkeypatch):
     async def insights(**kwargs):
         return {"views": 100, "reach": 80}
 
+    async def profile(**kwargs):
+        return {"id": "instagram-user", "media_count": 100, "followers_count": 366}
+
+    async def account_period(**kwargs):
+        days = kwargs["days"]
+        return {
+            "days": days,
+            "start": datetime(2026, 8, 1, tzinfo=timezone.utc),
+            "end": datetime(2026, 8, 31, tzinfo=timezone.utc),
+            "metrics": {"views": 16444},
+            "available_metrics": ["views"],
+            "errors": [],
+        }
+
     monkeypatch.setattr(analytics, "database_configured", lambda: True)
     monkeypatch.setattr(analytics, "database", lambda: SyncDatabase())
     monkeypatch.setattr(analytics, "resolve_instagram_credentials", credentials)
     monkeypatch.setattr(analytics, "list_instagram_media", media_list)
     monkeypatch.setattr(analytics, "fetch_media_insights", insights)
+    monkeypatch.setattr(analytics, "fetch_account_profile", profile)
+    monkeypatch.setattr(analytics, "fetch_account_period_insights", account_period)
     monkeypatch.setattr(analytics, "_store_media_snapshot", lambda *args: None)
 
     try:
@@ -176,6 +277,9 @@ def test_instagram_sync_reports_real_progress(monkeypatch):
     assert progress["percent"] == 100
     assert progress["current"] == 2
     assert progress["total"] == 2
+    assert result["account_profile"]["media_count"] == 100
+    assert result["account_insights"]["30"]["metrics"]["views"] == 16444
+    assert saved_state["account_profile"]["followers_count"] == 366
 
 
 def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
@@ -247,6 +351,73 @@ def test_dashboard_computes_totals_hours_hooks_and_deltas(monkeypatch):
     assert "reels_skip_rate" in dashboard["top_posts"][0]["available_metrics"]
     assert dashboard["top_posts"][0]["media_product_type"] == "REELS"
     assert dashboard["automatic_findings"]
+
+
+def test_dashboard_separates_official_account_totals_from_analyzed_media(monkeypatch):
+    documents = [
+        {
+            "_id": "media-1",
+            "media_kind": "reel",
+            "timestamp": datetime(2026, 8, 20, tzinfo=timezone.utc),
+            "latest_metrics": {"views": 1000, "reach": 800, "total_interactions": 80},
+        },
+        {
+            "_id": "media-2",
+            "media_kind": "photo",
+            "timestamp": datetime(2026, 8, 21, tzinfo=timezone.utc),
+            "latest_metrics": {"views": 500, "reach": 400, "total_interactions": 40},
+        },
+    ]
+    state = [
+        {
+            "_id": "primary",
+            "account_profile": {
+                "username": "oskyview",
+                "media_count": 100,
+                "followers_count": 366,
+                "follows_count": 107,
+            },
+            "account_insights": {
+                "30": {
+                    "days": 30,
+                    "start": datetime(2026, 7, 31, tzinfo=timezone.utc),
+                    "end": datetime(2026, 8, 30, tzinfo=timezone.utc),
+                    "metrics": {
+                        "views": 16444,
+                        "reach": 7364,
+                        "total_interactions": 797,
+                        "follows": 20,
+                        "unfollows": 29,
+                        "net_follows": -9,
+                    },
+                    "available_metrics": [
+                        "views",
+                        "reach",
+                        "total_interactions",
+                        "follows",
+                        "unfollows",
+                        "net_follows",
+                    ],
+                    "errors": [],
+                }
+            },
+        }
+    ]
+    monkeypatch.setattr(analytics, "database_configured", lambda: True)
+    monkeypatch.setattr(analytics, "database", lambda: FakeDatabase(documents, state=state))
+    monkeypatch.setattr(
+        analytics,
+        "utc_now",
+        lambda: datetime(2026, 8, 30, 12, tzinfo=timezone.utc),
+    )
+
+    dashboard = analytics.build_analytics_dashboard("Europe/Paris", period_days=30)
+
+    assert dashboard["account"]["profile"]["media_count"] == 100
+    assert dashboard["account"]["period"]["metrics"]["views"] == 16444
+    assert dashboard["account"]["period"]["metrics"]["net_follows"] == -9
+    assert dashboard["summary"]["media_count"] == 2
+    assert dashboard["summary"]["views"] == 1500
 
 
 def test_dashboard_compares_periods_and_builds_real_growth_series(monkeypatch):

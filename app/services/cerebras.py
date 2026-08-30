@@ -279,6 +279,7 @@ def _hook_features(hook: str) -> dict[str, Any]:
 def _compact_analytics_data(dashboard: dict[str, Any]) -> dict[str, Any]:
     growth_series = dashboard.get("growth_series") or []
     return {
+        "account": dashboard.get("account") or {},
         "summary": dashboard.get("summary") or {},
         "period_comparison": dashboard.get("period_comparison") or {},
         "growth": {

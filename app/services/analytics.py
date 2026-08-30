@@ -49,6 +49,29 @@ _sync_progress: dict[str, Any] = {
     "finished_at": None,
 }
 PERIOD_DAYS_OPTIONS = {7, 30, 90}
+ACCOUNT_METRICS = (
+    "views",
+    "reach",
+    "accounts_engaged",
+    "total_interactions",
+    "likes",
+    "comments",
+    "shares",
+    "saves",
+    "replies",
+)
+ACCOUNT_ADDITIVE_METRICS = (
+    "views",
+    "total_interactions",
+    "likes",
+    "comments",
+    "shares",
+    "saves",
+    "replies",
+    "follows",
+    "unfollows",
+)
+ACCOUNT_INSIGHTS_MAX_WINDOW_DAYS = 30
 
 
 def _set_sync_progress(**values: Any) -> None:
@@ -155,6 +178,232 @@ def normalize_insights(payload: dict[str, Any]) -> dict[str, int | float]:
         if value is not None:
             metrics[str(item["name"])] = value
     return metrics
+
+
+def normalize_account_insights(payload: dict[str, Any]) -> dict[str, int | float]:
+    metrics: dict[str, int | float] = {}
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict) or not item.get("name"):
+            continue
+        value = _metric_number(item)
+        if value is not None:
+            metrics[str(item["name"])] = value
+    return metrics
+
+
+def normalize_follow_breakdown(payload: dict[str, Any]) -> dict[str, int]:
+    follows = 0
+    unfollows = 0
+    found_follows = False
+    found_unfollows = False
+    for item in payload.get("data") or []:
+        if not isinstance(item, dict) or item.get("name") != "follows_and_unfollows":
+            continue
+        total_value = item.get("total_value") or {}
+        for breakdown in total_value.get("breakdowns") or []:
+            for result in breakdown.get("results") or []:
+                dimensions = result.get("dimension_values") or []
+                label = str(dimensions[0] if dimensions else "").strip().lower()
+                try:
+                    value = int(result.get("value") or 0)
+                except (TypeError, ValueError):
+                    continue
+                if "unfollow" in label or label in {"non_follower", "non-follower"}:
+                    unfollows += value
+                    found_unfollows = True
+                elif "follow" in label:
+                    follows += value
+                    found_follows = True
+    result: dict[str, int] = {}
+    if found_follows:
+        result["follows"] = follows
+    if found_unfollows:
+        result["unfollows"] = unfollows
+    if found_follows and found_unfollows:
+        result["net_follows"] = follows - unfollows
+    return result
+
+
+async def fetch_account_profile(
+    *,
+    user_id: str,
+    access_token: str,
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    payload = await _get_json(
+        client,
+        user_id,
+        access_token,
+        {"fields": "id,username,media_count,followers_count,follows_count"},
+    )
+    profile: dict[str, Any] = {
+        "id": str(payload.get("id") or user_id),
+        "username": str(payload.get("username") or ""),
+    }
+    for name in ("media_count", "followers_count", "follows_count"):
+        value = payload.get(name)
+        if isinstance(value, (int, float)):
+            profile[name] = int(value)
+    return profile
+
+
+async def fetch_account_period_insights(
+    *,
+    user_id: str,
+    access_token: str,
+    days: int,
+    client: httpx.AsyncClient,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    current = (now or utc_now()).astimezone(timezone.utc)
+    # Comme l'app Instagram, on compare les derniers jours entièrement terminés.
+    # Une synchronisation en milieu de journée ne mélange ainsi jamais un jour
+    # partiel avec les 29 jours précédents.
+    end = current.replace(hour=0, minute=0, second=0, microsecond=0)
+    start = end - timedelta(days=days)
+    display_start = start.date().isoformat()
+    display_end = (end - timedelta(days=1)).date().isoformat()
+    windows: list[tuple[datetime, datetime]] = []
+    cursor = start
+    while cursor < end:
+        window_end = min(
+            cursor + timedelta(days=ACCOUNT_INSIGHTS_MAX_WINDOW_DAYS),
+            end,
+        )
+        windows.append((cursor, window_end))
+        cursor = window_end
+
+    window_results = [
+        await _fetch_account_window_insights(
+            user_id=user_id,
+            access_token=access_token,
+            start=window_start,
+            end=window_end,
+            client=client,
+        )
+        for window_start, window_end in windows
+    ]
+    errors: list[str] = []
+    for index, result in enumerate(window_results, start=1):
+        errors.extend(
+            f"fenêtre {index}/{len(windows)} : {message}"
+            for message in result.get("errors") or []
+        )
+
+    if len(window_results) == 1:
+        metrics = dict(window_results[0].get("metrics") or {})
+        available_metrics = sorted(metrics)
+        return {
+            "days": days,
+            "start": start,
+            "end": end,
+            "display_start": display_start,
+            "display_end": display_end,
+            "metrics": metrics,
+            "available_metrics": available_metrics,
+            "exact_metrics": available_metrics,
+            "unavailable_metrics": sorted(
+                set((*ACCOUNT_METRICS, "follows", "unfollows", "net_follows"))
+                - set(available_metrics)
+            ),
+            "chunk_count": 1,
+            "notes": [],
+            "errors": errors[:12],
+        }
+
+    # Meta limite les Insights globaux à de petites fenêtres. Les métriques
+    # additives peuvent être additionnées sans changer leur sens. En revanche,
+    # additionner plusieurs portées compterait plusieurs fois la même personne.
+    metrics: dict[str, int | float] = {}
+    for metric in ACCOUNT_ADDITIVE_METRICS:
+        values = [
+            (result.get("metrics") or {}).get(metric)
+            for result in window_results
+        ]
+        if all(isinstance(value, (int, float)) for value in values):
+            metrics[metric] = sum(values)
+    if "follows" in metrics and "unfollows" in metrics:
+        metrics["net_follows"] = metrics["follows"] - metrics["unfollows"]
+
+    available_metrics = sorted(metrics)
+    unavailable_metrics = sorted(
+        set((*ACCOUNT_METRICS, "follows", "unfollows", "net_follows"))
+        - set(available_metrics)
+    )
+    notes = [
+        "Sur 90 jours, les compteurs additifs sont la somme exacte de trois fenêtres Meta de 30 jours.",
+        "La portée et les comptes engagés uniques ne sont pas additionnés, car cela compterait certaines personnes plusieurs fois. Consulte la vue 30 jours pour ces deux chiffres.",
+    ]
+    return {
+        "days": days,
+        "start": start,
+        "end": end,
+        "display_start": display_start,
+        "display_end": display_end,
+        "metrics": metrics,
+        "available_metrics": available_metrics,
+        "exact_metrics": available_metrics,
+        "unavailable_metrics": unavailable_metrics,
+        "chunk_count": len(window_results),
+        "notes": notes,
+        "errors": errors[:12],
+    }
+
+
+async def _fetch_account_window_insights(
+    *,
+    user_id: str,
+    access_token: str,
+    start: datetime,
+    end: datetime,
+    client: httpx.AsyncClient,
+) -> dict[str, Any]:
+    base_params = {
+        "period": "day",
+        "metric_type": "total_value",
+        "since": int(start.timestamp()),
+        "until": int(end.timestamp()),
+    }
+    errors: list[str] = []
+    try:
+        payload = await _get_json(
+            client,
+            f"{user_id}/insights",
+            access_token,
+            {**base_params, "metric": ",".join(ACCOUNT_METRICS)},
+        )
+        metrics = normalize_account_insights(payload)
+    except AnalyticsError:
+        metrics = {}
+        for metric in ACCOUNT_METRICS:
+            try:
+                payload = await _get_json(
+                    client,
+                    f"{user_id}/insights",
+                    access_token,
+                    {**base_params, "metric": metric},
+                )
+                metrics.update(normalize_account_insights(payload))
+            except AnalyticsError as exc:
+                errors.append(f"{metric}: {exc}")
+
+    follow_metrics: dict[str, int] = {}
+    try:
+        payload = await _get_json(
+            client,
+            f"{user_id}/insights",
+            access_token,
+            {
+                **base_params,
+                "metric": "follows_and_unfollows",
+                "breakdown": "follow_type",
+            },
+        )
+        follow_metrics = normalize_follow_breakdown(payload)
+    except AnalyticsError as exc:
+        errors.append(f"follows_and_unfollows: {exc}")
+
+    return {"metrics": {**metrics, **follow_metrics}, "errors": errors[:12]}
 
 
 async def fetch_media_insights(
@@ -321,9 +570,37 @@ async def sync_instagram_analytics(max_media: int | None = None) -> dict[str, An
             _set_sync_progress(
                 phase="listing",
                 percent=4.0,
-                message="Récupération de la liste des publications…",
+                message="Récupération du profil et des statistiques globales…",
             )
             async with httpx.AsyncClient(timeout=35) as client:
+                account_profile: dict[str, Any] = {}
+                account_insights: dict[str, Any] = {}
+                account_errors: list[str] = []
+                try:
+                    account_profile = await fetch_account_profile(
+                        user_id=user_id,
+                        access_token=access_token,
+                        client=client,
+                    )
+                except AnalyticsError as exc:
+                    account_errors.append(f"profil: {exc}")
+                for days in sorted(PERIOD_DAYS_OPTIONS):
+                    try:
+                        account_insights[str(days)] = await fetch_account_period_insights(
+                            user_id=user_id,
+                            access_token=access_token,
+                            days=days,
+                            client=client,
+                            now=started_at,
+                        )
+                    except AnalyticsError as exc:
+                        account_errors.append(f"{days} jours: {exc}")
+
+                _set_sync_progress(
+                    phase="listing",
+                    percent=8.0,
+                    message="Récupération de la liste des publications…",
+                )
                 media_items = await list_instagram_media(
                     user_id=user_id,
                     access_token=access_token,
@@ -383,6 +660,20 @@ async def sync_instagram_analytics(max_media: int | None = None) -> dict[str, An
                     message=f"Enregistrement : {saved} / {total}",
                 )
             now = utc_now()
+            previous_state = await asyncio.to_thread(
+                database().analytics_state.find_one,
+                {"_id": "primary"},
+            ) or {}
+            if not account_profile:
+                account_profile = previous_state.get("account_profile") or {}
+            previous_account_insights = previous_state.get("account_insights") or {}
+            for days in PERIOD_DAYS_OPTIONS:
+                key = str(days)
+                current_period = account_insights.get(key) or {}
+                if not (current_period.get("metrics") or {}):
+                    previous_period = previous_account_insights.get(key) or {}
+                    if previous_period.get("metrics"):
+                        account_insights[key] = previous_period
             state = {
                 "last_synced_at": now,
                 "media_found": len(media_items),
@@ -390,6 +681,9 @@ async def sync_instagram_analytics(max_media: int | None = None) -> dict[str, An
                 "metrics_failed": failed,
                 "last_error": first_error,
                 "permission_required": bool(failed and not succeeded),
+                "account_profile": account_profile,
+                "account_insights": account_insights,
+                "account_errors": account_errors[:20],
             }
             await asyncio.to_thread(
                 database().analytics_state.update_one,
@@ -717,6 +1011,14 @@ def build_analytics_dashboard(
             "Échantillon encore limité : interprète ces tendances comme des pistes, pas comme des certitudes."
         )
     state = db.analytics_state.find_one({"_id": "primary"}) or {}
+    account_profile = state.get("account_profile") or {}
+    account_insights = state.get("account_insights") or {}
+    selected_account_period = account_insights.get(str(period_days)) or {}
+    account_metrics = selected_account_period.get("metrics") or {}
+    account_reach = _number(account_metrics, "reach")
+    account_views = _number(account_metrics, "views")
+    account_interactions = _number(account_metrics, "total_interactions")
+    account_denominator = account_reach or account_views
     report = db.analytics_reports.find_one({"_id": "latest"}) or {}
     content_ideas = db.analytics_reports.find_one({"_id": "content_ideas_latest"}) or {}
     now = utc_now().astimezone(timezone.utc)
@@ -728,6 +1030,47 @@ def build_analytics_dashboard(
     )
     snapshots.reverse()
     return {
+        "account": {
+            "profile": {
+                "username": str(account_profile.get("username") or ""),
+                "media_count": account_profile.get("media_count"),
+                "followers_count": account_profile.get("followers_count"),
+                "follows_count": account_profile.get("follows_count"),
+            },
+            "period": {
+                "days": period_days,
+                "start": _iso(selected_account_period.get("start")),
+                "end": _iso(selected_account_period.get("end")),
+                "display_start": str(
+                    selected_account_period.get("display_start") or ""
+                ),
+                "display_end": str(
+                    selected_account_period.get("display_end") or ""
+                ),
+                "metrics": account_metrics,
+                "available_metrics": list(
+                    selected_account_period.get("available_metrics") or []
+                ),
+                "exact_metrics": list(
+                    selected_account_period.get("exact_metrics")
+                    or selected_account_period.get("available_metrics")
+                    or []
+                ),
+                "unavailable_metrics": list(
+                    selected_account_period.get("unavailable_metrics") or []
+                ),
+                "chunk_count": int(selected_account_period.get("chunk_count") or 0),
+                "notes": list(selected_account_period.get("notes") or []),
+                "engagement_rate": (
+                    account_interactions / account_denominator * 100
+                    if account_denominator
+                    else 0.0
+                ),
+                "errors": list(selected_account_period.get("errors") or []),
+            },
+            "errors": list(state.get("account_errors") or []),
+            "source": "instagram_account_insights",
+        },
         "summary": {
             "media_count": len(documents),
             "reels": kind_counts["reel"],
@@ -755,6 +1098,7 @@ def build_analytics_dashboard(
             "metrics_failed": int(state.get("metrics_failed", 0)),
             "last_error": str(state.get("last_error", "")),
             "permission_required": bool(state.get("permission_required", False)),
+            "account_errors": list(state.get("account_errors") or []),
         },
         "assistant_report": report.get("report"),
         "assistant_report_created_at": _iso(report.get("created_at")),
