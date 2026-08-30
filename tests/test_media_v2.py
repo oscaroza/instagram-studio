@@ -203,6 +203,67 @@ def test_carousel_validation_accepts_videos_and_mixed_media():
     assert [item["media_type"] for item in items] == ["image", "video"]
 
 
+def test_image_editor_state_is_sanitized_and_kept_with_photo():
+    items = v2.publication_media_items(
+        {
+            "media_items": [
+                {
+                    "url": "https://studio.example/photo-edited.jpg",
+                    "media_type": "image",
+                    "original_url": "https://studio.example/photo-original.jpg",
+                    "original_library_id": "original-id",
+                    "text_editor": {
+                        "version": 99,
+                        "layers": [
+                            {
+                                "id": "title",
+                                "text": "Vue du lac",
+                                "x": 2,
+                                "y": -1,
+                                "size": 80,
+                                "rotation": 999,
+                                "font": "Police distante interdite",
+                                "align": "diagonal",
+                                "color": "red",
+                                "strokeColor": "#010203",
+                                "backgroundColor": "#040506",
+                                "strokeWidth": 20,
+                                "backgroundOpacity": 5,
+                                "shadow": True,
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+        "photo",
+    )
+
+    item = items[0]
+    layer = item["text_editor"]["layers"][0]
+    assert item["original_url"].endswith("photo-original.jpg")
+    assert item["original_library_id"] == "original-id"
+    assert item["text_editor"]["version"] == 1
+    assert layer["x"] == 1
+    assert layer["y"] == 0
+    assert layer["size"] == 24
+    assert layer["rotation"] == 180
+    assert layer["font"] == "Arial Black"
+    assert layer["align"] == "center"
+    assert layer["color"] == "#ffffff"
+    assert layer["strokeWidth"] == 5
+    assert layer["backgroundOpacity"] == 0.9
+
+
+def test_image_editor_state_is_limited_to_twenty_layers():
+    state = v2.sanitize_image_editor_state(
+        {"layers": [{"text": f"Texte {index}"} for index in range(30)]}
+    )
+
+    assert state is not None
+    assert len(state["layers"]) == 20
+
+
 def test_story_validation_accepts_one_photo_or_video():
     for media_type, suffix in (("image", "jpg"), ("video", "mp4")):
         items = v2.publication_media_items(

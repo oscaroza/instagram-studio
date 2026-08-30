@@ -135,7 +135,67 @@ def parse_datetime(value: Any) -> datetime:
     return parsed.astimezone(timezone.utc)
 
 
-def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, str]]:
+IMAGE_EDITOR_FONTS = {
+    "Arial",
+    "Arial Black",
+    "Georgia",
+    "Impact",
+    "Trebuchet MS",
+    "Verdana",
+    "Courier New",
+    "Times New Roman",
+}
+
+
+def _bounded_number(value: Any, minimum: float, maximum: float, default: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return default
+    if parsed != parsed or parsed in {float("inf"), float("-inf")}:
+        return default
+    return max(minimum, min(maximum, parsed))
+
+
+def sanitize_image_editor_state(value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict) or not isinstance(value.get("layers"), list):
+        return None
+    layers: list[dict[str, Any]] = []
+    for index, raw_layer in enumerate(value["layers"][:20]):
+        if not isinstance(raw_layer, dict):
+            continue
+        font = str(raw_layer.get("font", "Arial Black"))
+        align = str(raw_layer.get("align", "center"))
+        colors = {}
+        for key, fallback in (
+            ("color", "#ffffff"),
+            ("strokeColor", "#000000"),
+            ("backgroundColor", "#000000"),
+        ):
+            color = str(raw_layer.get(key, fallback))
+            colors[key] = color if len(color) == 7 and color.startswith("#") else fallback
+        layers.append(
+            {
+                "id": str(raw_layer.get("id") or f"text-{index + 1}")[:80],
+                "text": str(raw_layer.get("text", ""))[:240],
+                "x": _bounded_number(raw_layer.get("x"), 0, 1, 0.5),
+                "y": _bounded_number(raw_layer.get("y"), 0, 1, 0.5),
+                "size": _bounded_number(raw_layer.get("size"), 2, 24, 8),
+                "rotation": _bounded_number(raw_layer.get("rotation"), -180, 180, 0),
+                "font": font if font in IMAGE_EDITOR_FONTS else "Arial Black",
+                "align": align if align in {"left", "center", "right"} else "center",
+                **colors,
+                "strokeWidth": _bounded_number(raw_layer.get("strokeWidth"), 0, 5, 0),
+                "backgroundOpacity": _bounded_number(
+                    raw_layer.get("backgroundOpacity"), 0, 0.9, 0
+                ),
+                "shadow": bool(raw_layer.get("shadow")),
+            }
+        )
+    return {"version": 1, "layers": layers} if layers else None
+
+
+def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, Any]]:
     raw_items = payload.get("media_items")
     if not isinstance(raw_items, list):
         raw_items = []
@@ -185,14 +245,22 @@ def publication_media_items(payload: dict, media_kind: str) -> list[dict[str, st
         )
         if media_type not in allowed_types:
             raise ValueError("Le type d’un média ne correspond pas à la publication.")
-        items.append(
-            {
-                "url": url,
-                "library_id": str(raw_item.get("library_id", "")).strip(),
-                "thumbnail_url": str(raw_item.get("thumbnail_url", "")).strip(),
-                "media_type": media_type,
-            }
-        )
+        item: dict[str, Any] = {
+            "url": url,
+            "library_id": str(raw_item.get("library_id", "")).strip(),
+            "thumbnail_url": str(raw_item.get("thumbnail_url", "")).strip(),
+            "media_type": media_type,
+        }
+        editor_state = sanitize_image_editor_state(raw_item.get("text_editor"))
+        source_url = str(raw_item.get("original_url", "")).strip()
+        if media_type == "image" and editor_state:
+            item["text_editor"] = editor_state
+            if source_url.startswith(("https://", "http://")):
+                item["original_url"] = source_url
+            item["original_library_id"] = str(
+                raw_item.get("original_library_id", "")
+            ).strip()
+        items.append(item)
 
     required = 2 if media_kind == "carousel" else 1
     maximum = 10 if media_kind == "carousel" else 1
@@ -802,6 +870,15 @@ async def promote_media_to_library(payload: dict):
             "muted": bool(stored_media.get("muted")),
             "created_at": utc_now(),
         }
+        editor_state = sanitize_image_editor_state(payload.get("text_editor"))
+        source_url = str(payload.get("source_url", "")).strip()
+        source_library_id = str(payload.get("source_library_id", "")).strip()
+        if media_type == "image" and editor_state:
+            document["text_editor"] = editor_state
+            if source_url.startswith(("https://", "http://")):
+                document["source_url"] = source_url
+            if source_library_id:
+                document["source_library_id"] = source_library_id[:100]
         if stored_media.get("public_id"):
             document["cloudinary_public_id"] = stored_media["public_id"]
         result = await asyncio.to_thread(database().media.insert_one, document)
