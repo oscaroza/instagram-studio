@@ -30,6 +30,14 @@ def test_protected_page_redirects_to_login():
             assert response.headers["location"].startswith("/login")
 
 
+def test_realtime_event_stream_requires_studio_session():
+    with temporary_settings(studio_access_code="test-only-code"):
+        with TestClient(app) as client:
+            response = client.get("/api/events")
+
+    assert response.status_code == 401
+
+
 def test_login_uses_numeric_keypad_without_revealing_access_code():
     with temporary_settings(studio_access_code="123456"):
         with TestClient(app) as client:
@@ -549,6 +557,7 @@ def test_phase_two_organization_controls_are_available():
     assert 'data-calendar-list-range="week"' in page.text
     assert 'data-calendar-list-range="today"' in page.text
     assert 'id="calendarEntryTitle"' in page.text
+    assert 'id="calendarLiveStatus"' in page.text
     assert 'id="librarySearch"' in page.text
     assert 'id="libraryUsageFilter"' in page.text
     assert 'id="carouselOrderHelp"' in page.text
@@ -558,6 +567,8 @@ def test_phase_two_organization_controls_are_available():
     assert "publication-status status-" in script.text
     assert "$('calendarEntryTitle').value" in script.text
     assert "/schedule" in script.text
+    assert "new EventSource('/api/events')" in script.text
+    assert "scheduleRealtimeCalendarRefresh" in script.text
 
 
 def test_autopilot_controls_are_available_without_replacing_existing_actions():

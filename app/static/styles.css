@@ -206,3 +206,5 @@ input,textarea,select,button,.button-link{max-width:100%}
   .stats-comparison-grid{grid-template-columns:1fr}
   .appearance-presets{grid-template-columns:1fr}
 }
+
+.calendar-live-row{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:8px 0}.calendar-live-row p{margin:0}.calendar-live-status{display:inline-flex;align-items:center;gap:7px;flex:0 0 auto;color:var(--muted);font-size:11px;font-weight:750}.calendar-live-status i{width:8px;height:8px;border-radius:50%;background:#8990a3;box-shadow:0 0 0 3px rgba(137,144,163,.12)}.calendar-live-status.live{color:var(--ok)}.calendar-live-status.live i{background:var(--ok);box-shadow:0 0 0 3px rgba(65,209,156,.15)}.calendar-live-status.connecting i{animation:live-status-pulse 1.4s ease-in-out infinite}.calendar-live-status.offline{color:#f5bb55}.calendar-live-status.offline i{background:#f5bb55;box-shadow:0 0 0 3px rgba(245,187,85,.14)}@keyframes live-status-pulse{50%{opacity:.35}}@media(max-width:760px){.calendar-live-row{align-items:flex-start;flex-direction:column}.calendar-live-status{min-height:24px}}

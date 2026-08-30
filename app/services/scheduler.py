@@ -18,6 +18,7 @@ from app.services.instagram import (
     wait_until_ready,
 )
 from app.services.push_notifications import send_notification
+from app.services.realtime import publish_calendar_change
 from app.services.token_store import resolve_instagram_credentials
 
 
@@ -168,6 +169,11 @@ async def _process_publication(publication: dict) -> None:
                 }
             },
         )
+        await publish_calendar_change(
+            action="status_changed",
+            publication_id=publication_id,
+            status="awaiting_manual",
+        )
         await send_notification(
             preference="manual_music",
             title="Prêt à finaliser dans Instagram",
@@ -263,6 +269,11 @@ async def _process_publication(publication: dict) -> None:
                 "$unset": {"last_error": ""},
             },
         )
+        await publish_calendar_change(
+            action="status_changed",
+            publication_id=publication_id,
+            status="published",
+        )
         type_label = {
             "photo": "Photo",
             "carousel": "Carrousel",
@@ -288,6 +299,11 @@ async def _process_publication(publication: dict) -> None:
                 }
             },
         )
+        await publish_calendar_change(
+            action="status_changed",
+            publication_id=publication_id,
+            status="failed",
+        )
         await send_notification(
             preference="failed",
             title="Échec de publication",
@@ -312,6 +328,11 @@ async def scheduler_tick() -> None:
                 publication = await asyncio.to_thread(_claim_due_publication)
                 if not publication:
                     break
+                await publish_calendar_change(
+                    action="status_changed",
+                    publication_id=publication.get("_id"),
+                    status="publishing",
+                )
                 await _process_publication(publication)
         except Exception:
             # APScheduler ne doit pas remplir les logs si Atlas est momentanément

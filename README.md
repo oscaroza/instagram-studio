@@ -191,6 +191,8 @@ Sur 90 jours, les compteurs additifs sont calculés avec trois fenêtres Meta de
 
 Le planificateur tourne dans le même service Render et vérifie les publications toutes les 30 secondes. UptimeRobot peut appeler `/health` régulièrement pour éviter la veille du service. Les tâches sont réclamées de façon atomique dans MongoDB afin d’éviter une double publication, et une tâche interrompue est remise en file après 15 minutes.
 
+Le calendrier utilise un canal SSE authentifié pour se mettre à jour sur les appareils actuellement connectés. Chaque changement envoie uniquement un petit signal d’invalidation, sans média, caption ni secret. Un seul relais par instance vérifie MongoDB toutes les trois secondes lorsqu’au moins un appareil écoute, ce qui conserve la synchronisation entre plusieurs instances Render sans multiplier les lectures par appareil. La PWA recharge uniquement la plage de calendrier affichée et regroupe les événements rapprochés.
+
 Une programmation avec musique ne publie pas via l’API : à l’heure prévue, elle passe à **À finaliser dans Instagram** et envoie une notification.
 
 ## Développement et tests

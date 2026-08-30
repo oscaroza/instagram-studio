@@ -60,6 +60,11 @@ from app.services.database import (
     utc_now,
 )
 from app.services.scheduler import start_scheduler, stop_scheduler
+from app.services.realtime import (
+    publish_calendar_change,
+    start_realtime_watcher,
+    stop_realtime_watcher,
+)
 from app.services.push_notifications import send_notification
 from app.services.token_store import (
     resolve_instagram_credentials,
@@ -133,6 +138,7 @@ templates = Jinja2Templates(
 
 @app.on_event("startup")
 async def startup_services():
+    start_realtime_watcher()
     if database_configured():
         try:
             start_scheduler()
@@ -144,6 +150,7 @@ async def startup_services():
 @app.on_event("shutdown")
 async def shutdown_services():
     stop_scheduler()
+    await stop_realtime_watcher()
 
 
 serializer = URLSafeSerializer(
@@ -893,7 +900,15 @@ async def instagram_publish(
                 "updated_at": utc_now(),
             }
             try:
-                await asyncio.to_thread(database().publications.insert_one, document)
+                insert_result = await asyncio.to_thread(
+                    database().publications.insert_one,
+                    document,
+                )
+                await publish_calendar_change(
+                    action="created",
+                    publication_id=insert_result.inserted_id,
+                    status="published",
+                )
             except Exception:
                 # Instagram a déjà publié : MongoDB ne doit pas changer ce succès
                 # en erreur visible dans le flow V1.

@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from app.config import settings
 from app.services.analytics import (
@@ -98,6 +98,7 @@ from app.security import (
     session_max_age_seconds,
 )
 from app.services.token_store import token_health
+from app.services.realtime import publish_calendar_change, realtime_event_stream
 
 
 router = APIRouter(prefix="/api")
@@ -107,6 +108,19 @@ def api_error(message: str, status_code: int = 400) -> JSONResponse:
     return JSONResponse(
         {"ok": False, "error": message},
         status_code=status_code,
+    )
+
+
+@router.get("/events")
+async def studio_events(request: Request):
+    return StreamingResponse(
+        realtime_event_stream(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 
@@ -1038,6 +1052,11 @@ async def create_publication(payload: dict):
         return api_error("Impossible d’enregistrer la publication dans MongoDB.", 503)
 
     document["_id"] = result.inserted_id
+    await publish_calendar_change(
+        action="created",
+        publication_id=result.inserted_id,
+        status=status,
+    )
     return {"ok": True, "publication": serialize_document(document)}
 
 
@@ -1410,6 +1429,11 @@ async def reschedule_publication(publication_id: str, payload: dict):
             "Cette publication n’est plus programmable ou la date n’a pas changé.",
             409,
         )
+    await publish_calendar_change(
+        action="rescheduled",
+        publication_id=identifier,
+        status="scheduled",
+    )
     return {"ok": True, "scheduled_for": scheduled_for.isoformat()}
 
 
@@ -1428,6 +1452,11 @@ async def cancel_publication(publication_id: str):
     )
     if not result.modified_count:
         return api_error("Cette publication ne peut plus être annulée.", 409)
+    await publish_calendar_change(
+        action="cancelled",
+        publication_id=identifier,
+        status="cancelled",
+    )
     return {"ok": True}
 
 

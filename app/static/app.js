@@ -30,6 +30,11 @@ let lastActivityAt = Date.now();
 let lastSessionTouchAt = 0;
 let sessionIdleTimer = null;
 let studioSessionExpired = false;
+let studioRealtimeSource = null;
+let calendarRealtimeTimer = null;
+let calendarEventVersion = 0;
+let calendarRenderedVersion = 0;
+let calendarLoadPromise = null;
 const STUDIO_SOUND_STORAGE_KEY = 'igstudio.studioSoundEnabled';
 let studioAudioContext = null;
 
@@ -90,6 +95,7 @@ function expireStudioSession(){
   if(studioSessionExpired)return;
   studioSessionExpired=true;
   clearTimeout(sessionIdleTimer);
+  if(studioRealtimeSource){studioRealtimeSource.close();studioRealtimeSource=null;}
   $('sessionExpiredBanner').classList.remove('hidden');
   document.body.classList.add('session-expired');
 }
@@ -118,9 +124,16 @@ for(const eventName of ['pointerdown','keydown','touchstart','scroll']){
 }
 window.addEventListener('pointerdown',unlockStudioSound,{passive:true});
 document.addEventListener('visibilitychange',()=>{
-  if(document.visibilityState!=='visible')return;
+  if(document.visibilityState!=='visible'){disconnectStudioRealtime();return;}
   if(Date.now()-lastActivityAt>=SESSION_IDLE_MS)expireStudioSession();
-  else registerActivity();
+  else{
+    registerActivity();
+    if(calendarPanelIsActive()){
+      connectStudioRealtime();
+      calendarEventVersion+=1;
+      scheduleRealtimeCalendarRefresh();
+    }
+  }
 });
 $('refreshSessionBtn').addEventListener('click',()=>location.reload());
 scheduleSessionExpiry();
@@ -252,7 +265,8 @@ function activateTab(name){
   if(name==='settings'){loadPublishingLimit();loadInstagramTokenHealth();loadLoginHistory();loadPasskeys();loadR2Usage();}
   if(name==='customize')loadAppearance();
   if(name==='library')loadLibrary();
-  if(name==='calendar')loadCalendar();
+  if(name==='calendar'){connectStudioRealtime();loadCalendar();}
+  else disconnectStudioRealtime();
   if(name==='stats'){loadAnalytics();loadAssistantChat();resumeAnalyticsSyncProgress();}
   if(name==='notifications')refreshPushState();
 }
@@ -1037,14 +1051,53 @@ function shiftCalendarCursor(direction){
   else calendarCursor.setMonth(calendarCursor.getMonth()+direction);
 }
 async function loadCalendar(){
-  const {start,end}=calendarBounds();$('calendarTitle').textContent=calendarTitle(start,end);hideNotice('calendarNotice');
-  document.querySelectorAll('[data-calendar-view]').forEach(button=>{const active=button.dataset.calendarView===calendarView;button.className=active?'secondary active':'ghost';});
-  const listOnly=calendarView==='list';$('calendarListRange').classList.toggle('hidden',!listOnly);
-  document.querySelectorAll('[data-calendar-list-range]').forEach(button=>{const active=button.dataset.calendarListRange===calendarListRange;button.className=active?'secondary active':'ghost';});
-  document.querySelector('.calendar-weekdays').classList.toggle('hidden',listOnly);$('calendarGrid').classList.toggle('hidden',listOnly);$('calendarDragHelp').classList.toggle('hidden',listOnly);
-  $('calendarListTitle').textContent=calendarListHeading();
-  try{const data=await api(`/api/publications/calendar?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);renderCalendar(data.items,start,end);}
-  catch(err){setNotice('calendarNotice',err.message,'error');$('calendarGrid').innerHTML='';$('calendarList').innerHTML='';}
+  if(calendarLoadPromise)return calendarLoadPromise;
+  const requestedVersion=calendarEventVersion;
+  calendarLoadPromise=(async()=>{
+    const {start,end}=calendarBounds();$('calendarTitle').textContent=calendarTitle(start,end);hideNotice('calendarNotice');
+    document.querySelectorAll('[data-calendar-view]').forEach(button=>{const active=button.dataset.calendarView===calendarView;button.className=active?'secondary active':'ghost';});
+    const listOnly=calendarView==='list';$('calendarListRange').classList.toggle('hidden',!listOnly);
+    document.querySelectorAll('[data-calendar-list-range]').forEach(button=>{const active=button.dataset.calendarListRange===calendarListRange;button.className=active?'secondary active':'ghost';});
+    document.querySelector('.calendar-weekdays').classList.toggle('hidden',listOnly);$('calendarGrid').classList.toggle('hidden',listOnly);$('calendarDragHelp').classList.toggle('hidden',listOnly);
+    $('calendarListTitle').textContent=calendarListHeading();
+    try{const data=await api(`/api/publications/calendar?start=${encodeURIComponent(start.toISOString())}&end=${encodeURIComponent(end.toISOString())}`);renderCalendar(data.items,start,end);}
+    catch(err){setNotice('calendarNotice',err.message,'error');$('calendarGrid').innerHTML='';$('calendarList').innerHTML='';}
+    finally{calendarRenderedVersion=Math.max(calendarRenderedVersion,requestedVersion);}
+  })();
+  try{return await calendarLoadPromise;}
+  finally{
+    calendarLoadPromise=null;
+    if(calendarEventVersion>calendarRenderedVersion)scheduleRealtimeCalendarRefresh();
+  }
+}
+
+function calendarPanelIsActive(){return $('calendar')?.classList.contains('active');}
+function setCalendarLiveStatus(state,text){const status=$('calendarLiveStatus');if(!status)return;status.className=`calendar-live-status ${state}`;status.lastChild.textContent=` ${text}`;}
+function scheduleRealtimeCalendarRefresh(){
+  if(!calendarPanelIsActive()||studioSessionExpired)return;
+  clearTimeout(calendarRealtimeTimer);
+  calendarRealtimeTimer=setTimeout(()=>loadCalendar(),180);
+}
+function markCalendarChanged(){calendarEventVersion+=1;scheduleRealtimeCalendarRefresh();}
+function disconnectStudioRealtime(){
+  clearTimeout(calendarRealtimeTimer);
+  if(studioRealtimeSource){studioRealtimeSource.close();studioRealtimeSource=null;}
+}
+function connectStudioRealtime(){
+  if(studioSessionExpired||document.visibilityState!=='visible'||studioRealtimeSource||!('EventSource' in window)){
+    if(!('EventSource' in window))setCalendarLiveStatus('offline','Actualisation à l’ouverture');
+    return;
+  }
+  setCalendarLiveStatus('connecting','Connexion en direct…');
+  const source=new EventSource('/api/events');studioRealtimeSource=source;
+  let receivedReady=false;
+  source.onopen=()=>setCalendarLiveStatus('live','Synchronisé en direct');
+  source.addEventListener('ready',()=>{setCalendarLiveStatus('live','Synchronisé en direct');if(receivedReady)markCalendarChanged();receivedReady=true;});
+  source.addEventListener('calendar',()=>markCalendarChanged());
+  source.onerror=()=>{
+    if(studioSessionExpired){source.close();return;}
+    setCalendarLiveStatus('offline','Reconnexion automatique…');
+  };
 }
 function sameLocalDay(first,second){return first.getFullYear()===second.getFullYear()&&first.getMonth()===second.getMonth()&&first.getDate()===second.getDate();}
 function calendarDayCell(date,items){
@@ -1506,3 +1559,4 @@ if(window.matchMedia('(max-width:760px)').matches){
 }
 updateDraftCount();configureMediaKind(false);updatePublicationOptions();refreshStudioSoundSetting();loadV2Status();
 const requestedTab=new URLSearchParams(location.search).get('tab');if(requestedTab)activateTab(requestedTab);
+window.addEventListener('beforeunload',()=>studioRealtimeSource?.close());

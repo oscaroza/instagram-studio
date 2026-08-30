@@ -11,7 +11,7 @@
   <link rel="manifest" href="/static/manifest.webmanifest">
   <link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
   <link rel="icon" href="/static/icons/icon-192.png" type="image/png">
-  <link rel="stylesheet" href="/static/styles.css?v=31">
+  <link rel="stylesheet" href="/static/styles.css?v=32">
 </head>
 <body data-session-idle-seconds="{{ session_idle_seconds }}" data-max-upload-mb="{{ max_upload_mb }}" data-density="{{ appearance.density }}" style="--bg:{{ appearance.background }};--surface:{{ appearance.surface }};--text:{{ appearance.text }};--accent:{{ appearance.accent }};--accent2:{{ appearance.accent }};--accent-contrast:{{ appearance.accent_text }};--card-radius:{{ appearance.radius }}px">
   <div id="sessionExpiredBanner" class="session-expired-banner hidden" role="alert" aria-live="assertive">
@@ -241,7 +241,10 @@
             <button class="ghost" data-calendar-list-range="today" type="button">Aujourd’hui</button>
           </div>
         </div>
-        <p id="calendarDragHelp" class="muted small">Fais glisser une publication programmée vers un autre jour pour la déplacer.</p>
+        <div class="calendar-live-row">
+          <p id="calendarDragHelp" class="muted small">Fais glisser une publication programmée vers un autre jour pour la déplacer.</p>
+          <span id="calendarLiveStatus" class="calendar-live-status connecting" role="status" aria-live="polite"><i></i> Connexion en direct…</span>
+        </div>
         <div class="calendar-weekdays"><span>Lun</span><span>Mar</span><span>Mer</span><span>Jeu</span><span>Ven</span><span>Sam</span><span>Dim</span></div>
         <div id="calendarGrid" class="calendar-grid"></div>
         <div id="calendarNotice" class="notice hidden"></div>
@@ -639,6 +642,6 @@
   </main>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=40"></script>
+  <script src="/static/app.js?v=41"></script>
 </body>
 </html>
