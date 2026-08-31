@@ -106,11 +106,16 @@ function refreshStudioSoundSetting(){
   $('studioSoundStatus').className=enabled?'cap-on':'cap-off';
 }
 
+function closeSessionStatsPanels(){
+  document.querySelectorAll('#stats details[data-close-on-session-end]').forEach(panel=>{panel.open=false;});
+}
+
 function expireStudioSession(){
   if(studioSessionExpired)return;
   studioSessionExpired=true;
   clearTimeout(sessionIdleTimer);
   if(studioRealtimeSource){studioRealtimeSource.close();studioRealtimeSource=null;}
+  closeSessionStatsPanels();
   $('sessionExpiredBanner').classList.remove('hidden');
   document.body.classList.add('session-expired');
 }
@@ -1899,6 +1904,6 @@ if(window.matchMedia('(max-width:760px)').matches){
   document.querySelector('.nested-collapsible')?.removeAttribute('open');
   document.querySelectorAll('details.collapsible-card')[1]?.removeAttribute('open');
 }
-updateDraftCount();refreshDrafts(true).catch(()=>{});configureMediaKind(false);updatePublicationOptions();refreshStudioSoundSetting();loadV2Status();
+closeSessionStatsPanels();updateDraftCount();refreshDrafts(true).catch(()=>{});configureMediaKind(false);updatePublicationOptions();refreshStudioSoundSetting();loadV2Status();
 const requestedTab=new URLSearchParams(location.search).get('tab');if(requestedTab)activateTab(requestedTab);
 window.addEventListener('beforeunload',()=>studioRealtimeSource?.close());

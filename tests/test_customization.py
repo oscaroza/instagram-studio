@@ -130,3 +130,14 @@ def test_customization_and_foldable_sections_are_rendered():
     assert page.text.count('class="card collapsible-card result-card"') == 2
     assert 'class="assistant-chat nested-collapsible"' in page.text
     assert 'data-session-idle-seconds="600"' in page.text
+
+
+def test_last_stats_panels_are_closed_after_each_new_session():
+    with temporary_settings(studio_access_code="123456", studio_cookie_secure=False):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "123456"})
+            page = client.get("/")
+
+    assert page.status_code == 200
+    assert page.text.count("data-close-on-session-end") == 3
+    assert 'data-close-on-session-end open' not in page.text
