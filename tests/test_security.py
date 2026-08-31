@@ -147,6 +147,23 @@ def test_jpeg_upload_accepts_real_jpeg_signature():
     assert response.json()["url"].endswith(".jpg")
 
 
+def test_composer_exposes_optional_local_jpeg_optimization():
+    with temporary_settings(
+        studio_access_code="test-only-code",
+        studio_cookie_secure=False,
+    ):
+        with TestClient(app) as client:
+            client.post("/login", data={"access_code": "test-only-code"})
+            page = client.get("/")
+            script = client.get("/static/app.js")
+
+    assert page.status_code == 200
+    assert 'id="imageOptimizationEnabled"' in page.text
+    assert "Optimiser les JPEG volumineux" in page.text
+    assert "IMAGE_OPTIMIZATION_SOURCE_LIMIT_BYTES=50*1024*1024" in script.text
+    assert "optimizeInstagramImage" in script.text
+
+
 def test_fake_jpeg_is_rejected_and_not_exposed():
     with temporary_settings(
         studio_access_code="test-only-code",

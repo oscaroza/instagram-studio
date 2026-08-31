@@ -203,6 +203,35 @@ function uploadMediaFile(file,onProgress){
     const form=new FormData();form.append('file',file);request.send(form);
   });
 }
+const INSTAGRAM_IMAGE_LIMIT_BYTES=8*1024*1024;
+const IMAGE_OPTIMIZATION_SOURCE_LIMIT_BYTES=50*1024*1024;
+const IMAGE_OPTIMIZATION_TARGET_BYTES=Math.floor(7.7*1024*1024);
+function canvasJpegBlob(canvas,quality){return new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('La compression JPEG a échoué.')),'image/jpeg',quality));}
+async function imageOptimizationSource(file){
+  if(typeof createImageBitmap==='function'){
+    try{const bitmap=await createImageBitmap(file,{imageOrientation:'from-image'});return {image:bitmap,width:bitmap.width,height:bitmap.height,cleanup:()=>bitmap.close?.()};}catch{}
+  }
+  const objectUrl=URL.createObjectURL(file),image=new Image();
+  try{await new Promise((resolve,reject)=>{image.onload=resolve;image.onerror=()=>reject(new Error('Cette image JPEG ne peut pas être décodée.'));image.src=objectUrl;});return {image,width:image.naturalWidth,height:image.naturalHeight,cleanup:()=>URL.revokeObjectURL(objectUrl)};}
+  catch(error){URL.revokeObjectURL(objectUrl);throw error;}
+}
+async function optimizeInstagramImage(file,kind){
+  if(file.size>IMAGE_OPTIMIZATION_SOURCE_LIMIT_BYTES)throw new Error(`Cette photo fait ${formatBytes(file.size)}. La source doit rester sous 50 Mo pour être optimisée sur cet appareil.`);
+  const source=await imageOptimizationSource(file),canvas=document.createElement('canvas'),context=canvas.getContext('2d',{alpha:false});
+  if(!context){source.cleanup();throw new Error('L’optimisation d’image n’est pas disponible dans ce navigateur.');}
+  try{
+    const maxWidth=kind==='story_photo'?1080:1440,maxHeight=kind==='story_photo'?1920:1800;
+    let scale=Math.min(1,maxWidth/source.width,maxHeight/source.height),lastBlob=null;
+    for(let resizePass=0;resizePass<4;resizePass++){
+      canvas.width=Math.max(1,Math.round(source.width*scale));canvas.height=Math.max(1,Math.round(source.height*scale));context.fillStyle='#ffffff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(source.image,0,0,canvas.width,canvas.height);
+      for(const quality of [.92,.86,.8,.74,.68,.6,.52]){
+        lastBlob=await canvasJpegBlob(canvas,quality);if(lastBlob.size<=IMAGE_OPTIMIZATION_TARGET_BYTES)return new File([lastBlob],file.name.replace(/\.(jpe?g)$/i,'-instagram.jpg'),{type:'image/jpeg',lastModified:file.lastModified});
+      }
+      scale*=.82;
+    }
+    throw new Error(`Impossible de réduire automatiquement cette photo sous 8 Mo${lastBlob?` (résultat : ${formatBytes(lastBlob.size)})`:''}.`);
+  }finally{source.cleanup();canvas.width=1;canvas.height=1;}
+}
 async function api(url, options={}){
   const response=await fetch(url,options);
   if(response.status===401){expireStudioSession();throw new Error('Session expirée. Actualise la page pour te reconnecter.');}
@@ -522,7 +551,7 @@ function renderSelectedMedia(){
     const preview=row.querySelector(previewTag);preview.src=item.thumbnail_url||item.url||'/static/icons/icon-192.png';
     if(previewTag==='video'){preview.muted=true;preview.playsInline=true;preview.preload='metadata';}
     row.querySelector('strong').textContent=item.name||`Média ${index+1}`;
-    row.querySelector('.selected-media-details span').textContent=`Position ${index+1} • ${item.media_type==='image'?'Photo JPEG':'Vidéo'}${item.edited?' • Texte ajouté':''}${item.size?` • ${formatBytes(item.size)}`:''}`;
+    row.querySelector('.selected-media-details span').textContent=`Position ${index+1} • ${item.media_type==='image'?'Photo JPEG':'Vidéo'}${item.edited?' • Texte ajouté':''}${item.size?` • ${formatBytes(item.size)}`:''}${item.optimized&&item.source_size?` • optimisée depuis ${formatBytes(item.source_size)}`:''}`;
     const handle=row.querySelector('.media-drag-handle');handle.classList.toggle('hidden',!reorderable);
     handle.addEventListener('keydown',(event)=>{
       if(!reorderable||!['ArrowUp','ArrowDown'].includes(event.key))return;
@@ -646,6 +675,11 @@ $('openInstagramFallbackBtn').addEventListener('click',()=>{location.href='insta
 function clearMediaSelection(){
   clearPreparedInstagramShare();selectedMediaItems=[];$('videoFile').value='';$('videoUrl').value='';$('libraryId').value='';$('thumbnailUrl').value='';syncMediaFields();renderSelectedMedia();hideUploadTransfer();hideNotice('uploadProgress');
 }
+function updateImageOptimizationHelp(){
+  const kind=$('mediaKind').value,imageKind=kind==='photo'||kind==='carousel'||kind==='story_photo',enabled=$('imageOptimizationEnabled').checked;
+  $('imageOptimizationOption').classList.toggle('hidden',!imageKind);
+  if(imageKind)$('mediaUploadHelp').textContent=enabled?'JPG / JPEG • source jusqu’à 50 Mo • copie finale sous 8 Mo':'JPG / JPEG • 8 Mo max par photo';
+}
 function configureMediaKind(clear=true){
   const kind=$('mediaKind').value,file=$('videoFile');
   if(clear)clearMediaSelection();
@@ -668,24 +702,32 @@ function configureMediaKind(clear=true){
   if(kind!=='reel')$('publicationMode').value='normal';
   if(kind!=='reel'&&kind!=='story_video')$('muteAudio').checked=false;
   if(storyMode)$('musicEnabled').checked=false;
+  updateImageOptimizationHelp();
   $('carouselOrderHelp').classList.toggle('hidden',!isCarouselMode(kind)||selectedMediaItems.length<2);
   updatePublicationOptions();
 }
 $('mediaKind').addEventListener('change',()=>configureMediaKind(true));
+$('imageOptimizationEnabled').addEventListener('change',updateImageOptimizationHelp);
 $('videoFile').addEventListener('change',async(e)=>{
   const fileInput=e.currentTarget,files=[...fileInput.files];if(!files.length)return;
   const kind=$('mediaKind').value,expected=kind==='reel'||kind==='carousel_video'||kind==='story_video'?'video':'image';
   if(isCarouselMode(kind)&&selectedMediaItems.length+files.length>10){setNotice('uploadProgress','Un carrousel contient au maximum 10 médias.','error');fileInput.value='';return;}
   if(!isCarouselMode(kind))selectedMediaItems=[];
-  const totalBytes=files.reduce((total,file)=>total+file.size,0);
-  let completedBytes=0;
-  const startedAt=performance.now();
   const uploadZone=fileInput.closest('.upload-zone');
   fileInput.disabled=true;uploadZone?.classList.add('uploading');
   hideNotice('uploadProgress');
   try{
-    for(const [index,file] of files.entries()){
-      const title=files.length>1?`Envoi ${index+1}/${files.length} • ${file.name}`:`Envoi de ${file.name}`;
+    const preparedFiles=[];
+    for(const [index,sourceFile] of files.entries()){
+      if(expected==='image'&&sourceFile.size>INSTAGRAM_IMAGE_LIMIT_BYTES){
+        if(!$('imageOptimizationEnabled').checked)throw new Error(`${sourceFile.name} fait ${formatBytes(sourceFile.size)}. Active « Optimiser les JPEG volumineux » pour créer automatiquement une copie compatible Meta.`);
+        hideUploadTransfer();setNotice('uploadProgress',`Optimisation locale ${index+1}/${files.length} de ${sourceFile.name} (${formatBytes(sourceFile.size)})…`);
+        const optimizedFile=await optimizeInstagramImage(sourceFile,kind);preparedFiles.push({file:optimizedFile,sourceFile,optimized:true});
+      }else preparedFiles.push({file:sourceFile,sourceFile,optimized:false});
+    }
+    hideNotice('uploadProgress');const totalBytes=preparedFiles.reduce((total,item)=>total+item.file.size,0),startedAt=performance.now();let completedBytes=0;
+    for(const [index,prepared] of preparedFiles.entries()){
+      const {file,sourceFile,optimized}=prepared,title=preparedFiles.length>1?`Envoi ${index+1}/${preparedFiles.length} • ${sourceFile.name}`:`Envoi de ${sourceFile.name}`;
       showUploadTransfer({title,loaded:completedBytes,total:totalBytes,startedAt});
       const data=await uploadMediaFile(file,(loaded,requestTotal)=>{
         const fileLoaded=requestTotal>0?Math.min(file.size,(loaded/requestTotal)*file.size):Math.min(file.size,loaded);
@@ -694,13 +736,14 @@ $('videoFile').addEventListener('change',async(e)=>{
       completedBytes+=file.size;
       showUploadTransfer({title,loaded:completedBytes,total:totalBytes,startedAt,processing:true});
       if(data.media_type!==expected)throw new Error('Le fichier ne correspond pas au type de publication choisi.');
-      selectedMediaItems.push({url:data.url,library_id:'',thumbnail_url:data.media_type==='image'?data.url:'',media_type:data.media_type,name:file.name,size:data.size});
+      selectedMediaItems.push({url:data.url,library_id:'',thumbnail_url:data.media_type==='image'?data.url:'',media_type:data.media_type,name:sourceFile.name,size:data.size,optimized,source_size:optimized?sourceFile.size:0});
       syncMediaFields();renderSelectedMedia();
     }
     syncMediaFields();renderSelectedMedia();
     const label=isCarouselMode(kind)?`${selectedMediaItems.length} ${kind==='carousel_video'?'vidéos':'photos'} prêtes`:kind==='photo'||kind==='story_photo'?'Photo prête':'Vidéo prête';
+    const optimizedFiles=preparedFiles.filter(item=>item.optimized),optimizationSummary=optimizedFiles.length?` ${optimizedFiles.length} photo(s) optimisée(s) : ${formatBytes(optimizedFiles.reduce((total,item)=>total+item.sourceFile.size,0))} → ${formatBytes(optimizedFiles.reduce((total,item)=>total+item.file.size,0))}.`:'';
     hideUploadTransfer();
-    setNotice('uploadProgress',`${label} avec une URL publique temporaire.`,'success');
+    setNotice('uploadProgress',`${label} avec une URL publique temporaire.${optimizationSummary}`,'success');
   }catch(err){hideUploadTransfer();setNotice('uploadProgress',err.message,'error');}
   finally{fileInput.disabled=false;uploadZone?.classList.remove('uploading');fileInput.value='';}
 });
