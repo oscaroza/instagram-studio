@@ -46,6 +46,10 @@ let calendarRealtimeTimer = null;
 let calendarEventVersion = 0;
 let calendarRenderedVersion = 0;
 let calendarLoadPromise = null;
+let sharedDrafts = [];
+let draftLoadPromise = null;
+let activeDraftClientId = '';
+let legacyDraftMigrationRunning = false;
 const STUDIO_SOUND_STORAGE_KEY = 'igstudio.studioSoundEnabled';
 let studioAudioContext = null;
 
@@ -762,30 +766,111 @@ $('generateBtn').addEventListener('click',async()=>{
   finally{btn.disabled=false;btn.textContent='✨ Générer avec Groq';}
 });
 
-function currentDraft(){syncMediaFields();const draft={};fields.forEach(f=>draft[f]=$(f).value);draft.savedAt=new Date().toISOString();draft.id=crypto.randomUUID();return draft;}
-function drafts(){try{return JSON.parse(localStorage.getItem('igstudio.drafts')||'[]');}catch{return [];}}
-function saveDrafts(value){localStorage.setItem('igstudio.drafts',JSON.stringify(value));updateDraftCount();}
-function updateDraftCount(){$('draftCount').textContent=drafts().length;}
-$('saveDraftBtn').addEventListener('click',()=>{const list=drafts();list.unshift(currentDraft());saveDrafts(list.slice(0,50));setNotice('actionMessage','Brouillon enregistré sur cet appareil.','success');});
-$('clearDraftsBtn').addEventListener('click',()=>{if(confirm('Supprimer tous les brouillons locaux ?')){saveDrafts([]);renderDrafts();}});
+function currentDraft(){
+  syncMediaFields();const draft={};fields.forEach(f=>draft[f]=$(f).value);
+  draft.clientId=activeDraftClientId||crypto.randomUUID();
+  draft.scheduleEnabled=$('scheduleEnabled').checked;draft.scheduledFor=$('scheduledFor').value;
+  draft.musicEnabled=$('musicEnabled').checked;draft.muteAudio=$('muteAudio').checked;
+  draft.imageOptimizationEnabled=$('imageOptimizationEnabled').checked;
+  return draft;
+}
+function localDrafts(){try{const value=JSON.parse(localStorage.getItem('igstudio.drafts')||'[]');return Array.isArray(value)?value:[];}catch{return [];}}
+function saveLocalDrafts(value){try{if(value.length)localStorage.setItem('igstudio.drafts',JSON.stringify(value));else localStorage.removeItem('igstudio.drafts');}catch{}}
+function updateDraftCount(){$('draftCount').textContent=sharedDrafts.length+localDrafts().length;}
+function parseDraftMedia(draft){try{const items=JSON.parse(draft.mediaItemsJson||'[]');return Array.isArray(items)?items:[];}catch{return [];}}
+
+async function promoteDraftMediaItems(draft,label='Préparation du brouillon partagé'){
+  const items=parseDraftMedia(draft).map(item=>({...item}));
+  for(let index=0;index<items.length;index++){
+    const item=items[index];if(item.library_id)continue;
+    setNotice('actionMessage',`${label} (${index+1}/${items.length})…`);
+    let sourceUrl=item.original_url||'',sourceLibraryId=item.original_library_id||'';
+    if(item.media_type==='image'&&item.text_editor&&sourceUrl&&!sourceLibraryId){
+      const original=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:sourceUrl,media_type:'image',description:`${draft.calendarEntryTitle||draft.location||'Brouillon'} • original`})});
+      sourceUrl=original.url;sourceLibraryId=original.media.id;
+    }
+    const promoted=await api('/api/library/promote',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({media_url:item.url,media_type:item.media_type,mute_audio:Boolean(draft.muteAudio),description:draft.calendarEntryTitle||draft.location||draft.description||'Brouillon',text_editor:item.text_editor||null,source_url:sourceUrl,source_library_id:sourceLibraryId})});
+    items[index]={...item,url:promoted.url,library_id:promoted.media.id,thumbnail_url:promoted.media.thumbnail_url||item.thumbnail_url,original_url:sourceUrl||item.original_url,original_library_id:sourceLibraryId||item.original_library_id};
+  }
+  return items;
+}
+
+async function migrateLegacyDrafts(){
+  if(legacyDraftMigrationRunning)return;
+  const legacy=localDrafts();if(!legacy.length)return;
+  legacyDraftMigrationRunning=true;const remaining=[];let migrated=0;
+  for(const oldDraft of legacy){
+    try{
+      const draft={...oldDraft,clientId:oldDraft.clientId||oldDraft.id||crypto.randomUUID()};
+      const durableItems=await promoteDraftMediaItems(draft,'Migration des anciens brouillons');
+      draft.mediaItemsJson=JSON.stringify(durableItems);
+      if(durableItems.length===1){draft.videoUrl=durableItems[0].url;draft.libraryId=durableItems[0].library_id||'';draft.thumbnailUrl=durableItems[0].thumbnail_url||'';}
+      await api('/api/drafts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(draft)});migrated++;
+    }catch{remaining.push(oldDraft);}
+  }
+  saveLocalDrafts(remaining);legacyDraftMigrationRunning=false;
+  if(migrated)setNotice('draftNotice',`${migrated} ancien(s) brouillon(s) transféré(s) vers le Studio partagé.`,'success');
+  if(remaining.length)setNotice('draftNotice',`${remaining.length} ancien(s) brouillon(s) restent sur cet appareil car leur média temporaire n’est plus accessible.`,'error');
+}
+
+async function refreshDrafts(migrate=true){
+  if(draftLoadPromise)return draftLoadPromise;
+  draftLoadPromise=(async()=>{
+    if(migrate)await migrateLegacyDrafts();
+    const data=await api('/api/drafts');sharedDrafts=data.items||[];updateDraftCount();return sharedDrafts;
+  })();
+  try{return await draftLoadPromise;}finally{draftLoadPromise=null;}
+}
+
+$('saveDraftBtn').addEventListener('click',async()=>{
+  const btn=$('saveDraftBtn');btn.disabled=true;const oldLabel=btn.textContent;btn.textContent='Enregistrement…';
+  try{
+    const mediaPayload=publicationPayload();
+    if(mediaPayload.media_items.length)await ensureDurablePayloadMedia(mediaPayload,'Préparation du brouillon partagé');
+    const data=await api('/api/drafts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(currentDraft())});
+    activeDraftClientId=data.draft.clientId||activeDraftClientId;sharedDrafts=[data.draft,...sharedDrafts.filter(item=>item.id!==data.draft.id&&item.clientId!==data.draft.clientId)];updateDraftCount();
+    setNotice('actionMessage','Brouillon enregistré et disponible sur tous tes appareils.','success');
+  }catch(err){setNotice('actionMessage',err.message,'error');}
+  finally{btn.disabled=false;btn.textContent=oldLabel;}
+});
+$('refreshDraftsBtn').addEventListener('click',()=>renderDrafts(true));
+$('clearDraftsBtn').addEventListener('click',async()=>{
+  if(!confirm('Supprimer tous les brouillons partagés ?'))return;
+  try{await api('/api/drafts',{method:'DELETE'});sharedDrafts=[];saveLocalDrafts([]);updateDraftCount();renderDraftList();setNotice('draftNotice','Tous les brouillons ont été supprimés.','success');}catch(err){setNotice('draftNotice',err.message,'error');}
+});
 function loadDraft(id){
-  const draft=drafts().find(x=>x.id===id);if(!draft)return;
+  const draft=sharedDrafts.find(x=>x.id===id)||localDrafts().find(x=>x.id===id);if(!draft)return;
   clearPreparedInstagramShare();
   fields.forEach(f=>{if(draft[f]!==undefined)$(f).value=draft[f];});
-  try{selectedMediaItems=JSON.parse(draft.mediaItemsJson||'[]');}catch{selectedMediaItems=[];}
-  configureMediaKind(false);syncMediaFields();renderSelectedMedia();activateTab('composer');
+  selectedMediaItems=parseDraftMedia(draft);configureMediaKind(false);
+  $('scheduleEnabled').checked=Boolean(draft.scheduleEnabled);$('scheduledFor').value=draft.scheduledFor||'';
+  $('musicEnabled').checked=Boolean(draft.musicEnabled);$('muteAudio').checked=Boolean(draft.muteAudio);
+  $('imageOptimizationEnabled').checked=draft.imageOptimizationEnabled!==false;
+  activeDraftClientId=draft.clientId||draft.id||'';syncMediaFields();renderSelectedMedia();updatePublicationOptions();updateImageOptimizationHelp();activateTab('composer');
 }
-function deleteDraft(id){saveDrafts(drafts().filter(x=>x.id!==id));renderDrafts();}
-function renderDrafts(){
-  const list=drafts(),root=$('draftList');root.innerHTML='';
+async function deleteDraft(id){
+  const local=localDrafts();
+  if(!sharedDrafts.some(item=>item.id===id)&&local.some(item=>item.id===id)){
+    saveLocalDrafts(local.filter(item=>item.id!==id));updateDraftCount();renderDraftList();return;
+  }
+  try{await api(`/api/drafts/${encodeURIComponent(id)}`,{method:'DELETE'});sharedDrafts=sharedDrafts.filter(x=>x.id!==id);updateDraftCount();renderDraftList();}catch(err){setNotice('draftNotice',err.message,'error');}
+}
+function renderDraftList(){
+  const legacy=localDrafts().map(item=>({...item,_localOnly:true}));
+  const list=[...sharedDrafts,...legacy],root=$('draftList');root.innerHTML='';
   if(!list.length){root.innerHTML='<p class="muted">Aucun brouillon.</p>';return;}
   for(const draft of list){
     const el=document.createElement('div');el.className='draft-item';
     el.innerHTML='<h3></h3><p></p><div class="draft-actions"><button class="secondary load">Ouvrir</button><button class="ghost del">Supprimer</button></div>';
     el.querySelector('h3').textContent=(draft.calendarEntryTitle||draft.location||draft.description||'Brouillon').slice(0,70);
-    el.querySelector('p').textContent=new Date(draft.savedAt).toLocaleString();
+    const savedDate=draft.savedAt?new Date(draft.savedAt).toLocaleString():'Date inconnue';
+    el.querySelector('p').textContent=draft._localOnly?`${savedDate} • ancien brouillon local à récupérer`:savedDate;
     el.querySelector('.load').onclick=()=>loadDraft(draft.id);el.querySelector('.del').onclick=()=>deleteDraft(draft.id);root.appendChild(el);
   }
+}
+async function renderDrafts(force=false){
+  const root=$('draftList');root.innerHTML='<p class="muted">Chargement des brouillons…</p>';hideNotice('draftNotice');
+  try{await refreshDrafts(true);renderDraftList();if(force)setNotice('draftNotice','Brouillons actualisés.','success');}catch(err){root.innerHTML='<p class="muted">Impossible de charger les brouillons.</p>';setNotice('draftNotice',err.message,'error');updateDraftCount();}
 }
 
 function updatePublicationOptions(){
@@ -1814,6 +1899,6 @@ if(window.matchMedia('(max-width:760px)').matches){
   document.querySelector('.nested-collapsible')?.removeAttribute('open');
   document.querySelectorAll('details.collapsible-card')[1]?.removeAttribute('open');
 }
-updateDraftCount();configureMediaKind(false);updatePublicationOptions();refreshStudioSoundSetting();loadV2Status();
+updateDraftCount();refreshDrafts(true).catch(()=>{});configureMediaKind(false);updatePublicationOptions();refreshStudioSoundSetting();loadV2Status();
 const requestedTab=new URLSearchParams(location.search).get('tab');if(requestedTab)activateTab(requestedTab);
 window.addEventListener('beforeunload',()=>studioRealtimeSource?.close());

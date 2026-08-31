@@ -37,6 +37,12 @@ from app.services.database import (
     serialize_document,
     utc_now,
 )
+from app.services.drafts import (
+    delete_all_drafts,
+    delete_draft,
+    list_drafts,
+    save_draft,
+)
 from app.services.push_notifications import (
     DEFAULT_PREFERENCES,
     delete_subscription,
@@ -814,6 +820,56 @@ async def list_library():
         "total_bytes": total_bytes,
         "providers": providers,
     }
+
+
+@router.get("/drafts")
+async def get_drafts():
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        items = await asyncio.to_thread(list_drafts)
+    except Exception:
+        return api_error("Brouillons MongoDB indisponibles.", 503)
+    return {"ok": True, "items": items}
+
+
+@router.post("/drafts")
+async def upsert_draft(payload: dict):
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        draft = await asyncio.to_thread(save_draft, payload)
+    except ValueError as exc:
+        return api_error(str(exc))
+    except Exception:
+        return api_error("Le brouillon n’a pas pu être enregistré dans MongoDB.", 503)
+    return {"ok": True, "draft": draft}
+
+
+@router.delete("/drafts")
+async def clear_drafts():
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        deleted = await asyncio.to_thread(delete_all_drafts)
+    except Exception:
+        return api_error("Les brouillons n’ont pas pu être supprimés.", 503)
+    return {"ok": True, "deleted": deleted}
+
+
+@router.delete("/drafts/{draft_id}")
+async def remove_draft(draft_id: str):
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        deleted = await asyncio.to_thread(delete_draft, draft_id)
+    except ValueError as exc:
+        return api_error(str(exc))
+    except Exception:
+        return api_error("Le brouillon n’a pas pu être supprimé.", 503)
+    if not deleted:
+        return api_error("Brouillon introuvable.", 404)
+    return {"ok": True}
 
 
 @router.post("/library/promote")

@@ -55,6 +55,8 @@ def ensure_indexes() -> None:
     db.publications.create_index([("status", ASCENDING), ("scheduled_for", ASCENDING)])
     db.publications.create_index([("library_id", ASCENDING)])
     db.publications.create_index([("library_ids", ASCENDING)])
+    db.drafts.create_index("client_id", unique=True)
+    db.drafts.create_index([("updated_at", ASCENDING)])
     db.autopilot_queue.create_index([("status", ASCENDING), ("created_at", ASCENDING)])
     db.autopilot_queue.create_index([("proposal.scheduled_for", ASCENDING)])
     db.push_subscriptions.create_index("endpoint", unique=True)

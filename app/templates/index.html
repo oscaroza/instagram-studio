@@ -485,8 +485,15 @@
 
     <section id="drafts" class="panel">
       <div class="card">
-        <div class="row-between"><h2>Brouillons locaux</h2><button id="clearDraftsBtn" class="ghost">Tout supprimer</button></div>
-        <p class="muted">Stockés uniquement dans Safari/Chrome sur cet appareil. Aucun mot de passe ni token n'est enregistré ici.</p>
+        <div class="row-between">
+          <h2>Brouillons partagés</h2>
+          <div class="draft-actions draft-toolbar-actions">
+            <button id="refreshDraftsBtn" class="secondary" type="button">Actualiser</button>
+            <button id="clearDraftsBtn" class="ghost" type="button">Tout supprimer</button>
+          </div>
+        </div>
+        <p class="muted">Disponibles sur tous tes appareils : seuls les textes et références sont stockés dans MongoDB, tandis que les médias nécessaires restent dans Cloudflare R2. Aucun mot de passe ni token n’est enregistré.</p>
+        <div id="draftNotice" class="notice hidden"></div>
         <div id="draftList" class="draft-list"></div>
       </div>
     </section>
@@ -743,6 +750,6 @@
   </div>
 
   <script src="/static/passkeys.js?v=1"></script>
-  <script src="/static/app.js?v=44"></script>
+  <script src="/static/app.js?v=45"></script>
 </body>
 </html>
