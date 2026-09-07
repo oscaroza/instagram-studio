@@ -270,6 +270,36 @@ def test_story_video_container_uses_video_url(monkeypatch):
     assert "image_url" not in payload
 
 
+def test_in_progress_timeout_is_distinct_from_a_meta_failure(monkeypatch):
+    calls = []
+
+    async def status(**kwargs):
+        calls.append(kwargs)
+        return {"status_code": "IN_PROGRESS", "status": "IN_PROGRESS"}
+
+    async def no_wait(_seconds):
+        return None
+
+    monkeypatch.setattr(instagram, "get_container_status", status)
+    monkeypatch.setattr(instagram.asyncio, "sleep", no_wait)
+
+    try:
+        asyncio.run(
+            instagram.wait_until_ready(
+                creation_id="container-id",
+                access_token="server-secret",
+                timeout_seconds=10,
+            )
+        )
+    except instagram.InstagramProcessingTimeout as exc:
+        assert exc.status_code == "IN_PROGRESS"
+        assert "10 secondes" in str(exc)
+    else:
+        raise AssertionError("IN_PROGRESS ne doit pas être traité comme un rejet Meta.")
+
+    assert len(calls) == 2
+
+
 def test_publish_carousel_accepts_ordered_images_and_videos(monkeypatch):
     created_items = []
     parent_children = []

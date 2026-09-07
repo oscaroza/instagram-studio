@@ -1509,7 +1509,7 @@ function renderCalendar(items,start,end){
     row.querySelector('.title').textContent=item.title||'Publication Instagram';row.querySelector('.details').textContent=`${eventDate(item).toLocaleString('fr-FR')} • ${mediaLabel}${item.publication_mode==='trial'?' • Trial Reel':''}${item.workflow==='manual_music'?' • Musique manuelle':''}`;
     const statusBadge=row.querySelector('.publication-status');statusBadge.className=`publication-status status-${statusKey}`;statusBadge.textContent=statusLabels[item.status]||item.status||'Statut inconnu';
     if(item.last_error)row.querySelector('.error-text').textContent=item.last_error;
-    else if(item.status==='processing')row.querySelector('.error-text').textContent='Meta traite encore le média. Le Studio vérifiera de nouveau automatiquement.';
+    else if(item.status==='processing'){const processingText=row.querySelector('.error-text');processingText.className='processing-text';processingText.textContent='Meta traite encore le média. Le Studio vérifiera de nouveau automatiquement.';}
     if(item.status==='failed'){
       const retry=document.createElement('button');retry.className='primary';retry.type='button';retry.textContent='Réessayer';
       retry.onclick=async()=>{

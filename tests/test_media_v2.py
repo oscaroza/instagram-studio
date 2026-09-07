@@ -466,6 +466,61 @@ def test_failed_publication_can_be_retried_safely(monkeypatch):
     )
 
 
+def test_scheduler_defers_media_that_meta_is_still_processing(monkeypatch):
+    updates = []
+    notifications = []
+    events = []
+
+    class Publications:
+        def update_one(self, query, update):
+            updates.append((query, update))
+
+    class Database:
+        publications = Publications()
+
+    async def credentials():
+        return "ig-user", "server-secret"
+
+    async def wait(**kwargs):
+        raise scheduler.InstagramProcessingTimeout(
+            "Instagram traite encore le média.",
+            status_code="IN_PROGRESS",
+            status_detail="IN_PROGRESS",
+        )
+
+    async def notify(**kwargs):
+        notifications.append(kwargs)
+
+    async def calendar_event(**kwargs):
+        events.append(kwargs)
+
+    monkeypatch.setattr(scheduler, "database", lambda: Database())
+    monkeypatch.setattr(scheduler, "resolve_instagram_credentials", credentials)
+    monkeypatch.setattr(scheduler, "wait_until_ready", wait)
+    monkeypatch.setattr(scheduler, "send_notification", notify)
+    monkeypatch.setattr(scheduler, "publish_calendar_change", calendar_event)
+
+    asyncio.run(
+        scheduler._process_publication(
+            {
+                "_id": "publication-id",
+                "title": "Grand montage",
+                "media_kind": "reel",
+                "creation_id": "container-id",
+                "video_url": "https://media.example.com/reel.mp4",
+                "processing_timeouts": 0,
+            }
+        )
+    )
+
+    deferred = updates[-1][1]
+    assert deferred["$set"]["status"] == "processing"
+    assert deferred["$inc"] == {"processing_timeouts": 1}
+    assert deferred["$set"]["next_attempt_at"] > scheduler.utc_now()
+    assert events[-1]["status"] == "processing"
+    assert notifications == []
+
+
 def test_library_reports_media_usage_for_filters(monkeypatch):
     now = v2.utc_now()
 

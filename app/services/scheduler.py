@@ -296,6 +296,7 @@ async def _process_publication(publication: dict) -> None:
             url="/?tab=calendar",
             tag=f"published-{publication_id}",
         )
+        return
     except InstagramProcessingTimeout as exc:
         timeout_count = int(publication.get("processing_timeouts") or 0) + 1
         if timeout_count <= MAX_PROCESSING_TIMEOUTS:
