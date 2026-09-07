@@ -12,6 +12,13 @@ class InstagramError(RuntimeError):
     pass
 
 
+class InstagramProcessingTimeout(InstagramError):
+    def __init__(self, message: str, *, status_code: str, status_detail: str):
+        super().__init__(message)
+        self.status_code = status_code
+        self.status_detail = status_detail
+
+
 # ============================================================
 # URL API INSTAGRAM / META
 # ============================================================
@@ -1075,11 +1082,13 @@ async def wait_until_ready(
         )
     )
 
-    raise InstagramError(
+    raise InstagramProcessingTimeout(
         "Instagram traite encore le média après "
         f"{timeout_seconds} secondes. "
         f"Statut : {final_status}. "
-        f"Détail : {final_detail or 'aucun'}."
+        f"Détail : {final_detail or 'aucun'}.",
+        status_code=final_status,
+        status_detail=final_detail,
     )
 
 

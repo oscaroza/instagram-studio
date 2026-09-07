@@ -4,7 +4,7 @@ const fields = [
   'tone','extra','calendarEntryTitle','caption','hashtags','altText','hook','publicationMode'
 ];
 const statusLabels = {
-  scheduled:'Programmée', publishing:'Publication en cours', published:'Publiée',
+  scheduled:'Programmée', processing:'Traitement Instagram', publishing:'Publication en cours', published:'Publiée',
   failed:'Échec', cancelled:'Annulée', awaiting_manual:'À finaliser dans Instagram'
 };
 let calendarCursor = new Date();
@@ -1509,6 +1509,17 @@ function renderCalendar(items,start,end){
     row.querySelector('.title').textContent=item.title||'Publication Instagram';row.querySelector('.details').textContent=`${eventDate(item).toLocaleString('fr-FR')} • ${mediaLabel}${item.publication_mode==='trial'?' • Trial Reel':''}${item.workflow==='manual_music'?' • Musique manuelle':''}`;
     const statusBadge=row.querySelector('.publication-status');statusBadge.className=`publication-status status-${statusKey}`;statusBadge.textContent=statusLabels[item.status]||item.status||'Statut inconnu';
     if(item.last_error)row.querySelector('.error-text').textContent=item.last_error;
+    else if(item.status==='processing')row.querySelector('.error-text').textContent='Meta traite encore le média. Le Studio vérifiera de nouveau automatiquement.';
+    if(item.status==='failed'){
+      const retry=document.createElement('button');retry.className='primary';retry.type='button';retry.textContent='Réessayer';
+      retry.onclick=async()=>{
+        if(!confirm('Réessayer cette publication maintenant ? Le Studio recréera un nouveau conteneur Meta avec les mêmes médias et le même texte.'))return;
+        retry.disabled=true;retry.textContent='Remise en file…';
+        try{await api(`/api/publications/${item.id}/retry`,{method:'POST'});setNotice('calendarNotice','Publication remise en file d’attente. Une nouvelle tentative va démarrer automatiquement.','success');await loadCalendar();}
+        catch(err){setNotice('calendarNotice',err.message,'error');retry.disabled=false;retry.textContent='Réessayer';}
+      };
+      row.querySelector('.publication-actions').appendChild(retry);
+    }
     if(['scheduled','failed','awaiting_manual'].includes(item.status)){const cancel=document.createElement('button');cancel.className='ghost';cancel.textContent='Annuler';cancel.onclick=async()=>{if(!confirm('Annuler cette publication ?'))return;try{await api(`/api/publications/${item.id}`,{method:'DELETE'});loadCalendar();}catch(err){setNotice('calendarNotice',err.message,'error');}};row.querySelector('.publication-actions').appendChild(cancel);}
     if(item.status==='awaiting_manual'){
       const prepare=document.createElement('button');prepare.className='primary';prepare.textContent='Préparer les médias';prepare.onclick=async()=>{prepare.disabled=true;prepare.textContent='Préparation…';activateTab('composer');await prepareInstagramFinalization(item);prepare.disabled=false;prepare.textContent='Préparer les médias';};row.querySelector('.publication-actions').appendChild(prepare);

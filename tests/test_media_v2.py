@@ -432,6 +432,40 @@ def test_scheduled_publication_can_be_moved_and_reminder_is_reset(monkeypatch):
     assert "reminder_sent_at" in calls[0][1]["$unset"]
 
 
+def test_failed_publication_can_be_retried_safely(monkeypatch):
+    calls = []
+
+    class UpdateResult:
+        modified_count = 1
+
+    class Publications:
+        def update_one(self, query, update):
+            calls.append((query, update))
+            return UpdateResult()
+
+    class Database:
+        publications = Publications()
+
+    monkeypatch.setattr(v2, "database_configured", lambda: True)
+    monkeypatch.setattr(v2, "database", lambda: Database())
+    monkeypatch.setattr(v2, "object_id", lambda value: f"object-{value}")
+
+    result = asyncio.run(v2.retry_failed_publication("publication-id"))
+
+    assert result["ok"] is True
+    query, update = calls[0]
+    assert query == {
+        "_id": "object-publication-id",
+        "status": "failed",
+        "instagram_media_id": {"$exists": False},
+    }
+    assert update["$set"]["status"] == "scheduled"
+    assert update["$inc"] == {"manual_retries": 1}
+    assert {"last_error", "creation_id", "started_at", "reminder_sent_at"} <= set(
+        update["$unset"]
+    )
+
+
 def test_library_reports_media_usage_for_filters(monkeypatch):
     now = v2.utc_now()
 

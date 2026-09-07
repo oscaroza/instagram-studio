@@ -9,6 +9,7 @@ from app.config import settings
 from app.services.database import database, database_configured, ensure_indexes, utc_now
 from app.services.instagram import (
     InstagramError,
+    InstagramProcessingTimeout,
     create_carousel_container,
     create_carousel_item_container,
     create_image_container,
@@ -25,6 +26,7 @@ from app.services.token_store import resolve_instagram_credentials
 _scheduler: AsyncIOScheduler | None = None
 _tick_lock = asyncio.Lock()
 _indexes_ready = False
+MAX_PROCESSING_TIMEOUTS = 6
 
 
 async def _send_token_health_alerts() -> None:
@@ -138,8 +140,12 @@ def _claim_due_publication():
     now = utc_now()
     return database().publications.find_one_and_update(
         {
-            "status": "scheduled",
+            "status": {"$in": ["scheduled", "processing"]},
             "scheduled_for": {"$lte": now},
+            "$or": [
+                {"next_attempt_at": {"$exists": False}},
+                {"next_attempt_at": {"$lte": now}},
+            ],
         },
         {
             "$set": {
@@ -266,7 +272,11 @@ async def _process_publication(publication: dict) -> None:
                     "published_at": utc_now(),
                     "updated_at": utc_now(),
                 },
-                "$unset": {"last_error": ""},
+                "$unset": {
+                    "last_error": "",
+                    "next_attempt_at": "",
+                    "processing_detail": "",
+                },
             },
         )
         await publish_calendar_change(
@@ -286,31 +296,60 @@ async def _process_publication(publication: dict) -> None:
             url="/?tab=calendar",
             tag=f"published-{publication_id}",
         )
+    except InstagramProcessingTimeout as exc:
+        timeout_count = int(publication.get("processing_timeouts") or 0) + 1
+        if timeout_count <= MAX_PROCESSING_TIMEOUTS:
+            next_attempt_at = utc_now() + timedelta(minutes=2)
+            await asyncio.to_thread(
+                database().publications.update_one,
+                {"_id": publication_id},
+                {
+                    "$set": {
+                        "status": "processing",
+                        "next_attempt_at": next_attempt_at,
+                        "processing_detail": str(exc)[:800],
+                        "updated_at": utc_now(),
+                    },
+                    "$inc": {"processing_timeouts": 1},
+                },
+            )
+            await publish_calendar_change(
+                action="processing_deferred",
+                publication_id=publication_id,
+                status="processing",
+            )
+            return
+        safe_error = (
+            "Instagram traite toujours le média après plusieurs vérifications. "
+            "Utilise Réessayer pour lancer un nouveau conteneur Meta."
+        )
     except Exception as exc:
         safe_error = str(exc)[:800]
-        await asyncio.to_thread(
-            database().publications.update_one,
-            {"_id": publication_id},
-            {
-                "$set": {
-                    "status": "failed",
-                    "last_error": safe_error,
-                    "updated_at": utc_now(),
-                }
+
+    await asyncio.to_thread(
+        database().publications.update_one,
+        {"_id": publication_id},
+        {
+            "$set": {
+                "status": "failed",
+                "last_error": safe_error,
+                "updated_at": utc_now(),
             },
-        )
-        await publish_calendar_change(
-            action="status_changed",
-            publication_id=publication_id,
-            status="failed",
-        )
-        await send_notification(
-            preference="failed",
-            title="Échec de publication",
-            body=f"« {title} » n’a pas pu être publié. Ouvre le Studio pour voir le détail.",
-            url="/?tab=calendar",
-            tag=f"failed-{publication_id}",
-        )
+            "$unset": {"next_attempt_at": "", "processing_detail": ""},
+        },
+    )
+    await publish_calendar_change(
+        action="status_changed",
+        publication_id=publication_id,
+        status="failed",
+    )
+    await send_notification(
+        preference="failed",
+        title="Échec de publication",
+        body=f"« {title} » n’a pas pu être publié. Ouvre le Studio pour voir le détail.",
+        url="/?tab=calendar",
+        tag=f"failed-{publication_id}",
+    )
 
 
 async def scheduler_tick() -> None:

@@ -1570,6 +1570,54 @@ async def reschedule_publication(publication_id: str, payload: dict):
     return {"ok": True, "scheduled_for": scheduled_for.isoformat()}
 
 
+@router.post("/publications/{publication_id}/retry")
+async def retry_failed_publication(publication_id: str):
+    if not database_configured():
+        return api_error("MONGODB_URI n’est pas configurée.", 503)
+    try:
+        identifier = object_id(publication_id)
+    except ValueError as exc:
+        return api_error(str(exc))
+
+    retry_at = utc_now()
+    result = await asyncio.to_thread(
+        database().publications.update_one,
+        {
+            "_id": identifier,
+            "status": "failed",
+            "instagram_media_id": {"$exists": False},
+        },
+        {
+            "$set": {
+                "status": "scheduled",
+                "scheduled_for": retry_at,
+                "updated_at": retry_at,
+            },
+            "$inc": {"manual_retries": 1},
+            "$unset": {
+                "last_error": "",
+                "creation_id": "",
+                "started_at": "",
+                "reminder_sent_at": "",
+                "next_attempt_at": "",
+                "processing_detail": "",
+                "processing_timeouts": "",
+            },
+        },
+    )
+    if not result.modified_count:
+        return api_error(
+            "Cette publication n’est plus en échec ou a peut-être déjà été publiée.",
+            409,
+        )
+    await publish_calendar_change(
+        action="retry_scheduled",
+        publication_id=identifier,
+        status="scheduled",
+    )
+    return {"ok": True, "scheduled_for": retry_at.isoformat()}
+
+
 @router.delete("/publications/{publication_id}")
 async def cancel_publication(publication_id: str):
     if not database_configured():
