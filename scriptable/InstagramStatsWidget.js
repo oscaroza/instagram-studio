@@ -48,6 +48,13 @@ function compact(value) {
   return Math.round(n).toLocaleString("fr-FR");
 }
 
+function refreshTime() {
+  const df = new DateFormatter();
+  df.locale = "fr_FR";
+  df.dateFormat = "HH:mm";
+  return df.string(new Date());
+}
+
 function metric(stack, value, label, suffix = "") {
   const v = stack.addText(`${value}${suffix}`);
   v.font = Font.boldSystemFont(19);
@@ -67,7 +74,7 @@ async function buildWidget() {
   const w = new ListWidget();
   w.url = `${STUDIO_URL}/#stats`;
   w.refreshAfterDate = new Date(Date.now() + 30 * 60 * 1000);
-  w.setPadding(13, 14, 11, 14);
+  w.setPadding(13, 14, 9, 14);
 
   try {
     const cookie = await login();
@@ -113,7 +120,7 @@ async function buildWidget() {
     const engagementAvailable = has("total_interactions") && (has("reach") || has("views"));
     metric(engagement, engagementAvailable ? Number(period.engagement_rate || 0).toFixed(1) : "—", "ENGAGEMENT", engagementAvailable ? "%" : "");
 
-    w.addSpacer(9);
+    w.addSpacer(7);
 
     const bottom = w.addStack();
     bottom.layoutHorizontally();
@@ -141,6 +148,13 @@ async function buildWidget() {
       bestMeta.font = Font.systemFont(8);
       bestMeta.textOpacity = 0.55;
     }
+
+    w.addSpacer(5);
+    const refreshRow = w.addStack();
+    refreshRow.addSpacer();
+    const refreshed = refreshRow.addText(`↻ Widget actualisé à ${refreshTime()}`);
+    refreshed.font = Font.mediumSystemFont(7);
+    refreshed.textOpacity = 0.38;
   } catch (e) {
     const title = w.addText("INSTAGRAM STATS");
     title.font = Font.boldSystemFont(13);
@@ -151,6 +165,13 @@ async function buildWidget() {
     detail.font = Font.systemFont(9);
     detail.textOpacity = 0.55;
     detail.lineLimit = 3;
+
+    w.addSpacer();
+    const refreshRow = w.addStack();
+    refreshRow.addSpacer();
+    const refreshed = refreshRow.addText(`↻ Tentative à ${refreshTime()}`);
+    refreshed.font = Font.mediumSystemFont(7);
+    refreshed.textOpacity = 0.38;
   }
   return w;
 }
